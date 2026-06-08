@@ -54,15 +54,21 @@ Approve the Windows administrator prompt and leave the elevated terminal open. T
 openclaw gateway run --force --bind tailnet --port 18789 --compact
 ```
 
-The launcher also creates a temporary local compatibility forwarder:
+The launcher also creates a temporary local compatibility proxy:
 
 ```text
 127.0.0.1:18789 -> detected Meshnet/Tailnet host:18789
 ```
 
-That is for local OpenClaw helpers that expect the Gateway on localhost. The forwarder is removed when the foreground Gateway exits normally.
+That is for local OpenClaw helpers that expect the Gateway on localhost. The proxy helper is `openclaw-loopback-proxy.js`, and its diagnostic log is written to:
 
-If you rerun the launcher while an older launcher window is still closing, the newest run owns the forwarder so an older cleanup should not remove the new local route.
+```text
+%USERPROFILE%\.openclaw\logs\loopback-proxy.log
+```
+
+The proxy is stopped when the foreground Gateway exits normally.
+
+If you rerun the launcher while an older launcher window is still closing, the newest run owns the proxy so an older cleanup should not remove the new local route.
 
 The launcher also refreshes `gateway.remote.url` to the current PC Meshnet/Tailnet address on startup.
 

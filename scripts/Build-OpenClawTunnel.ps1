@@ -3,7 +3,9 @@ param(
     [string] $BuildToolsVersion = "",
     [string] $OutputApk = "",
     [switch] $Install,
-    [string] $AdbSerial = ""
+    [string] $AdbSerial = "",
+    [int] $VersionCode = 5,
+    [string] $VersionName = "1.4"
 )
 
 $ErrorActionPreference = "Stop"
@@ -103,7 +105,7 @@ $classesJar = Join-Path $buildDir "classes.jar"
 $keystore = Join-Path $buildDir "debug.keystore"
 
 & $aapt2 compile --dir (Join-Path $androidDir "res") -o $compiledRes
-& $aapt2 link -I $androidJar --manifest (Join-Path $androidDir "AndroidManifest.xml") --java $genDir -o $baseApk $compiledRes
+& $aapt2 link -I $androidJar --manifest (Join-Path $androidDir "AndroidManifest.xml") --java $genDir --min-sdk-version 23 --target-sdk-version 36 --version-code $VersionCode --version-name $VersionName -o $baseApk $compiledRes
 
 $javaFiles = @(
     Get-ChildItem -Recurse -LiteralPath (Join-Path $androidDir "src") -Filter "*.java" |

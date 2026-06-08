@@ -68,11 +68,32 @@ if (-not (Get-Command openclaw -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
+$nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
+if (-not $nodeCommand) {
+    Write-Host ""
+    Write-Host "ERROR: node.exe was not found on PATH." -ForegroundColor Red
+    Write-Host "Expected Node.js at C:\Program Files\nodejs or on PATH."
+    Write-Host ""
+    Read-Host "Press Enter to close"
+    exit 1
+}
+
 $stateDir = Join-Path $env:USERPROFILE ".openclaw"
 $portProxyOwnerPath = Join-Path $stateDir "openclaw-clickstart-portproxy-owner.txt"
+$loopbackProxyPidPath = Join-Path $stateDir "openclaw-clickstart-loopback-proxy.pid"
+$loopbackProxyScriptPath = Join-Path $PSScriptRoot "openclaw-loopback-proxy.js"
 $runId = [guid]::NewGuid().ToString()
 New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
 Set-Content -Path $portProxyOwnerPath -Value $runId -Encoding ASCII
+
+if (-not (Test-Path -LiteralPath $loopbackProxyScriptPath)) {
+    Write-Host ""
+    Write-Host "ERROR: loopback proxy helper was not found:" -ForegroundColor Red
+    Write-Host $loopbackProxyScriptPath
+    Write-Host ""
+    Read-Host "Press Enter to close"
+    exit 1
+}
 
 Write-Host "OpenClaw Agent Gateway" -ForegroundColor Cyan
 Write-Host "======================"
@@ -85,6 +106,14 @@ Write-Host "Stopping the background Scheduled Task first to avoid port 18789 col
 & openclaw gateway stop *> $null
 & schtasks /End /TN "OpenClaw Gateway" *> $null
 & netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=18789 *> $null
+if (Test-Path -LiteralPath $loopbackProxyPidPath) {
+    try {
+        $oldPid = [int]((Get-Content -Raw -LiteralPath $loopbackProxyPidPath).Trim())
+        Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
+    } catch {
+    }
+    Remove-Item -LiteralPath $loopbackProxyPidPath -Force -ErrorAction SilentlyContinue
+}
 Start-Sleep -Seconds 3
 
 $meshIp = Get-OpenClawMeshIPv4
@@ -97,9 +126,9 @@ if (-not $meshIp) {
     exit 1
 }
 & openclaw config set gateway.remote.url "ws://$($meshIp):18789" *> $null
-$loopbackProxyJob = Start-Job -Name "OpenClawLoopbackPortProxy" -ArgumentList $meshIp, $portProxyOwnerPath, $runId -ScriptBlock {
-    param([string] $MeshIp, [string] $OwnerPath, [string] $RunId)
-    Start-Sleep -Seconds 8
+$loopbackProxyJob = Start-Job -Name "OpenClawLoopbackProxyStarter" -ArgumentList $meshIp, $portProxyOwnerPath, $runId, $loopbackProxyPidPath, $loopbackProxyScriptPath, $nodeCommand.Source -ScriptBlock {
+    param([string] $MeshIp, [string] $OwnerPath, [string] $RunId, [string] $PidPath, [string] $ProxyScriptPath, [string] $NodePath)
+    Start-Sleep -Seconds 6
     try {
         $currentOwner = (Get-Content -Raw -Path $OwnerPath -ErrorAction Stop).Trim()
         if ($currentOwner -ne $RunId) {
@@ -108,8 +137,8 @@ $loopbackProxyJob = Start-Job -Name "OpenClawLoopbackPortProxy" -ArgumentList $m
     } catch {
         return
     }
-    & netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=18789 *> $null
-    & netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=18789 connectaddress=$MeshIp connectport=18789 *> $null
+    $process = Start-Process -FilePath $NodePath -ArgumentList @($ProxyScriptPath, $MeshIp, "18789", $OwnerPath, $RunId) -WindowStyle Hidden -PassThru
+    Set-Content -Path $PidPath -Value $process.Id -Encoding ASCII
 }
 
 Write-Host ""
@@ -125,7 +154,7 @@ Write-Host "Telegram:"
 Write-Host "  Message your OpenClaw Telegram bot directly."
 Write-Host ""
 Write-Host "Local compatibility:"
-Write-Host "  127.0.0.1:18789 will forward to $($meshIp):18789 after startup."
+Write-Host "  A local TCP proxy will forward 127.0.0.1:18789 to $($meshIp):18789 after startup."
 Write-Host "  This fixes local channel helpers that expect localhost."
 Write-Host ""
 Write-Host "Starter prompt to paste:"
@@ -144,6 +173,14 @@ try {
     $currentOwner = (Get-Content -Raw -Path $portProxyOwnerPath -ErrorAction Stop).Trim()
     if ($currentOwner -eq $runId) {
         & netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=18789 *> $null
+        if (Test-Path -LiteralPath $loopbackProxyPidPath) {
+            try {
+                $proxyPid = [int]((Get-Content -Raw -LiteralPath $loopbackProxyPidPath).Trim())
+                Stop-Process -Id $proxyPid -Force -ErrorAction SilentlyContinue
+            } catch {
+            }
+            Remove-Item -LiteralPath $loopbackProxyPidPath -Force -ErrorAction SilentlyContinue
+        }
         Remove-Item -Path $portProxyOwnerPath -Force -ErrorAction SilentlyContinue
     }
 } catch {
