@@ -1,0 +1,20 @@
+# Generated Android artifacts
+build/
+dist/
+*.apk
+*.idsig
+*.apks
+*.aab
+*.dex
+*.class
+*.jar
+*.keystore
+*.jks
+
+# Generated source/package snapshots
+OpenClawTunnel-source.zip
+
+# Local/editor noise
+*.log
+.DS_Store
+Thumbs.db
