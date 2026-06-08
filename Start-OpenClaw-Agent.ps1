@@ -125,6 +125,7 @@ if (-not $meshIp) {
     Read-Host "Press Enter to close"
     exit 1
 }
+& openclaw config set agents.defaults.thinkingDefault xhigh *> $null
 & openclaw config set gateway.remote.url "ws://$($meshIp):18789" *> $null
 $loopbackProxyJob = Start-Job -Name "OpenClawLoopbackProxyStarter" -ArgumentList $meshIp, $portProxyOwnerPath, $runId, $loopbackProxyPidPath, $loopbackProxyScriptPath, $nodeCommand.Source -ScriptBlock {
     param([string] $MeshIp, [string] $OwnerPath, [string] $RunId, [string] $PidPath, [string] $ProxyScriptPath, [string] $NodePath)
@@ -156,6 +157,9 @@ Write-Host ""
 Write-Host "Local compatibility:"
 Write-Host "  A local TCP proxy will forward 127.0.0.1:18789 to $($meshIp):18789 after startup."
 Write-Host "  This fixes local channel helpers that expect localhost."
+Write-Host ""
+Write-Host "Agent thinking default:"
+Write-Host "  xhigh"
 Write-Host ""
 Write-Host "Starter prompt to paste:"
 Write-Host "  Confirm you are my OpenClaw agent running on my PC. Tell me your current model, available tools, and whether Telegram/control UI access is working. Then wait for my next instruction."
