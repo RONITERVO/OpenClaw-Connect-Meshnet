@@ -6,7 +6,8 @@ const state = {
   mode: "now",
   helpMode: localStorage.getItem("openclawAutomatorHelpMode") || "simple",
   helpTimer: null,
-  helpTarget: null,
+  helpPendingTarget: null,
+  helpVisibleTarget: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -361,6 +362,10 @@ function positionHelpBubble(target) {
 function showHelp(target) {
   const help = helpTextFor(target);
   if (!help.text) return;
+  clearTimeout(state.helpTimer);
+  state.helpTimer = null;
+  state.helpPendingTarget = null;
+  state.helpVisibleTarget = target;
   els.helpBubbleTitle.textContent = help.title;
   renderLinkedHelp(els.helpBubbleText, help.text);
   els.helpBubble.hidden = false;
@@ -370,17 +375,36 @@ function showHelp(target) {
 function hideHelp() {
   clearTimeout(state.helpTimer);
   state.helpTimer = null;
-  state.helpTarget = null;
+  state.helpPendingTarget = null;
+  state.helpVisibleTarget = null;
   els.helpBubble.hidden = true;
 }
 
 function queueHelp(target, delayMs = 5000) {
-  hideHelp();
+  if (target === state.helpPendingTarget || target === state.helpVisibleTarget) return;
+  clearTimeout(state.helpTimer);
+  state.helpTimer = null;
   if (!helpTextFor(target).text) return;
-  state.helpTarget = target;
+  state.helpPendingTarget = target;
   state.helpTimer = setTimeout(() => {
-    if (state.helpTarget === target) showHelp(target);
+    if (state.helpPendingTarget === target) showHelp(target);
   }, delayMs);
+}
+
+function cancelQueuedHelp(target) {
+  if (target && state.helpPendingTarget !== target) return;
+  clearTimeout(state.helpTimer);
+  state.helpTimer = null;
+  state.helpPendingTarget = null;
+}
+
+function refreshVisibleHelpPosition() {
+  if (els.helpBubble.hidden || !state.helpVisibleTarget) return;
+  if (!document.body.contains(state.helpVisibleTarget)) {
+    hideHelp();
+    return;
+  }
+  positionHelpBubble(state.helpVisibleTarget);
 }
 
 function setHelpMode(mode) {
@@ -675,15 +699,23 @@ document.addEventListener("click", (event) => {
 
 function handleHelpEnter(event) {
   const target = event.target.closest("[data-help-key]");
-  if (!target || target === state.helpTarget || !document.body.contains(target)) return;
+  if (!target || !document.body.contains(target)) return;
   queueHelp(target, 5000);
 }
 
 function handleHelpLeave(event) {
-  if (!state.helpTarget) return;
+  const target = event.target.closest("[data-help-key]");
+  if (!target) return;
   const next = event.relatedTarget;
-  if (next && state.helpTarget.contains(next)) return;
+  if (next && target.contains(next)) return;
   if (next && els.helpBubble.contains(next)) return;
+  cancelQueuedHelp(target);
+}
+
+function handleOutsidePointerDown(event) {
+  if (els.helpBubble.hidden) return;
+  if (els.helpBubble.contains(event.target)) return;
+  if (state.helpVisibleTarget?.contains(event.target)) return;
   hideHelp();
 }
 
@@ -691,6 +723,7 @@ document.addEventListener("pointerover", handleHelpEnter);
 document.addEventListener("pointerout", handleHelpLeave);
 document.addEventListener("mouseover", handleHelpEnter);
 document.addEventListener("mouseout", handleHelpLeave);
+document.addEventListener("pointerdown", handleOutsidePointerDown);
 
 document.addEventListener("focusin", (event) => {
   const target = event.target.closest("[data-help-key]");
@@ -702,15 +735,17 @@ document.addEventListener("focus", (event) => {
   if (target) queueHelp(target, 1200);
 }, true);
 
-document.addEventListener("focusout", hideHelp);
-document.addEventListener("blur", hideHelp, true);
+document.addEventListener("focusout", (event) => {
+  const target = event.target.closest("[data-help-key]");
+  if (target) cancelQueuedHelp(target);
+});
+document.addEventListener("blur", () => cancelQueuedHelp(), true);
 els.helpBubble.addEventListener("mouseenter", () => clearTimeout(state.helpTimer));
-els.helpBubble.addEventListener("mouseleave", hideHelp);
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") hideHelp();
 });
-window.addEventListener("scroll", hideHelp, true);
-window.addEventListener("resize", hideHelp);
+window.addEventListener("scroll", refreshVisibleHelpPosition, true);
+window.addEventListener("resize", refreshVisibleHelpPosition);
 
 ["input", "change"].forEach((eventName) => {
   [
