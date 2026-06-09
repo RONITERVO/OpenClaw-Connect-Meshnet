@@ -18,7 +18,7 @@ const auditPath = join(stateDir, "automation-log.jsonl");
 const defaultGatewayHttp = process.env.OPENCLAW_AUTOMATOR_GATEWAY_HTTP || "http://127.0.0.1:18789";
 const openclawCommand = process.env.OPENCLAW_BIN || (process.platform === "win32" ? "openclaw.cmd" : "openclaw");
 const openclawMjs = process.env.APPDATA ? join(process.env.APPDATA, "npm", "node_modules", "openclaw", "openclaw.mjs") : "";
-const appVersion = "0.4.8";
+const appVersion = "0.4.9";
 
 const contentTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -311,13 +311,21 @@ function workflowControllerRequested(body) {
   return parseWorkflowSteps(workflow.steps).length > 0;
 }
 
-function psSingle(value) {
-  return String(value ?? "").replace(/'/g, "''");
+function workflowAdvanceUrl(workflow, step, status) {
+  const parts = [
+    "api",
+    "workflows",
+    encodeURIComponent(workflow.id),
+    "advance",
+    encodeURIComponent(workflow.jobId || ""),
+    String(step.index),
+    encodeURIComponent(status),
+  ];
+  return `http://127.0.0.1:${port}/${parts.join("/")}`;
 }
 
 function workflowAdvanceCommand(workflow, step, status) {
-  const body = `@{ jobId = '${psSingle(workflow.jobId)}'; stepIndex = ${step.index}; status = '${status}' } | ConvertTo-Json -Compress`;
-  return `powershell -NoProfile -ExecutionPolicy Bypass -Command "$body = ${body}; Invoke-RestMethod -Method POST -Uri 'http://127.0.0.1:${port}/api/workflows/${workflow.id}/advance' -ContentType 'application/json' -Body $body"`;
+  return `curl.exe -fsS -X POST ${workflowAdvanceUrl(workflow, step, status)}`;
 }
 
 function workflowStepMessage(workflow) {
@@ -1245,6 +1253,17 @@ async function handleApi(req, res, pathname) {
     }
     const args = cronArgs(body, settings);
     jsonResponse(res, 200, await runCommand("cron", args, 30000));
+    return;
+  }
+  if (req.method === "POST" && pathname.startsWith("/api/workflows/") && pathname.includes("/advance/")) {
+    const parts = pathname.split("/");
+    const id = decodeURIComponent(parts[3] || "");
+    const body = {
+      jobId: decodeURIComponent(parts[5] || ""),
+      stepIndex: Number(decodeURIComponent(parts[6] || "")),
+      status: decodeURIComponent(parts[7] || ""),
+    };
+    jsonResponse(res, 200, await advanceWorkflow(id, body));
     return;
   }
   if (req.method === "POST" && pathname.startsWith("/api/workflows/") && pathname.endsWith("/advance")) {
