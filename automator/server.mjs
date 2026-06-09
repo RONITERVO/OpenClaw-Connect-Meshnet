@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const appRoot = resolve(__dirname, "..");
@@ -15,10 +15,12 @@ const stateDir = join(homedir(), ".openclaw", "automator");
 const workflowsDir = join(stateDir, "workflows");
 const settingsPath = join(stateDir, "settings.json");
 const auditPath = join(stateDir, "automation-log.jsonl");
+const workflowIntakeApprovalsPath = join(stateDir, "workflow-intake-approvals.json");
 const defaultGatewayHttp = process.env.OPENCLAW_AUTOMATOR_GATEWAY_HTTP || "http://127.0.0.1:18789";
 const openclawCommand = process.env.OPENCLAW_BIN || (process.platform === "win32" ? "openclaw.cmd" : "openclaw");
 const openclawMjs = process.env.APPDATA ? join(process.env.APPDATA, "npm", "node_modules", "openclaw", "openclaw.mjs") : "";
-const appVersion = "0.4.13";
+const appVersion = "0.4.14";
+const workflowIntakeApprovalTtlMs = 30 * 60 * 1000;
 
 const contentTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -67,7 +69,7 @@ function errorResponse(res, status, message, detail = null) {
 
 function parseJson(text, fallback = null) {
   try {
-    return JSON.parse(text);
+    return JSON.parse(String(text).replace(/^\uFEFF/, ""));
   } catch {
     return fallback;
   }
@@ -419,6 +421,202 @@ function workflowIntakeMissingItem(field, detail) {
   return { field, detail };
 }
 
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map((item) => stableJson(item)).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function workflowIntakeDraftHash(draft) {
+  return createHash("sha256").update(stableJson(draft)).digest("hex");
+}
+
+function workflowIntakeApprovalCode() {
+  return `WF-${randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+}
+
+function publicWorkflowIntakeApproval(approval) {
+  if (!approval) return null;
+  const phrase = `approve workflow ${approval.code}`;
+  return {
+    id: approval.id,
+    code: approval.code,
+    phrase,
+    expiresAt: approval.expiresAt,
+    sessionKey: approval.sessionKey,
+    instructions: `Ask the user to reply exactly: ${phrase}. Create is blocked until that later user message is visible in the selected OpenClaw session transcript.`,
+  };
+}
+
+async function readWorkflowIntakeApprovals() {
+  await ensureStateDir();
+  try {
+    const state = parseJson(await readFile(workflowIntakeApprovalsPath, "utf8"), {});
+    return { approvals: Array.isArray(state.approvals) ? state.approvals : [] };
+  } catch {
+    return { approvals: [] };
+  }
+}
+
+async function writeWorkflowIntakeApprovals(state) {
+  await ensureStateDir();
+  await writeFile(workflowIntakeApprovalsPath, `${JSON.stringify({ approvals: state.approvals || [] }, null, 2)}\n`, "utf8");
+}
+
+async function createWorkflowIntakeApproval(intake) {
+  const now = Date.now();
+  const draftHash = workflowIntakeDraftHash(intake.draft);
+  const state = await readWorkflowIntakeApprovals();
+  const approvals = state.approvals.filter((item) => {
+    if (!item || item.expiresAtMs <= now) return false;
+    if (item.status !== "pending") return true;
+    return item.draftHash !== draftHash;
+  });
+  const approval = {
+    id: randomUUID(),
+    code: workflowIntakeApprovalCode(),
+    status: "pending",
+    createdAt: new Date(now).toISOString(),
+    createdAtMs: now,
+    expiresAt: new Date(now + workflowIntakeApprovalTtlMs).toISOString(),
+    expiresAtMs: now + workflowIntakeApprovalTtlMs,
+    draftHash,
+    sessionKey: intake.draft.sessionKey,
+    name: intake.draft.name,
+  };
+  approvals.push(approval);
+  await writeWorkflowIntakeApprovals({ approvals });
+  return approval;
+}
+
+async function updateWorkflowIntakeApproval(id, patch) {
+  const state = await readWorkflowIntakeApprovals();
+  const index = state.approvals.findIndex((item) => item.id === id);
+  if (index < 0) return null;
+  state.approvals[index] = {
+    ...state.approvals[index],
+    ...patch,
+    updatedAt: new Date().toISOString(),
+  };
+  await writeWorkflowIntakeApprovals(state);
+  return state.approvals[index];
+}
+
+function normalizeApprovalText(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function compactApprovalText(value) {
+  return normalizeApprovalText(value).replace(/\s+/g, "");
+}
+
+function messageContentText(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.map((part) => {
+      if (typeof part === "string") return part;
+      if (part && typeof part === "object") return part.text || part.content || "";
+      return "";
+    }).filter(Boolean).join("\n");
+  }
+  if (content && typeof content === "object") return content.text || content.content || "";
+  return "";
+}
+
+async function sessionFileForKey(sessionKey) {
+  const parts = sessionParts(sessionKey);
+  const agentId = parts.agentId || "main";
+  const sessionsPath = join(homedir(), ".openclaw", "agents", agentId, "sessions", "sessions.json");
+  const sessions = parseJson(await readFile(sessionsPath, "utf8"), {});
+  const entry = sessions?.[sessionKey];
+  if (!entry) return "";
+  return optionalText(entry.sessionFile, 1000) || (entry.sessionId ? join(homedir(), ".openclaw", "agents", agentId, "sessions", `${entry.sessionId}.jsonl`) : "");
+}
+
+async function findWorkflowIntakeUserConfirmation(approval) {
+  let sessionFile = "";
+  try {
+    sessionFile = await sessionFileForKey(approval.sessionKey);
+  } catch {
+    return { ok: false, reason: "session_index_unavailable", detail: "Could not read OpenClaw sessions.json for the selected session key." };
+  }
+  if (!sessionFile || !existsSync(sessionFile)) {
+    return { ok: false, reason: "session_file_missing", detail: "Could not find the OpenClaw session transcript for the selected session key." };
+  }
+
+  const code = compactApprovalText(approval.code);
+  const positiveWords = new Set(["approve", "approved", "confirm", "confirmed", "create", "yes", "ok"]);
+  const lines = (await readFile(sessionFile, "utf8")).split(/\r?\n/).filter(Boolean);
+  for (const line of lines) {
+    const item = parseJson(line, null);
+    if (!item || item.type !== "message" || item.message?.role !== "user") continue;
+    const ts = Date.parse(item.timestamp || item.message?.timestamp || "");
+    if (!Number.isFinite(ts) || ts <= approval.createdAtMs) continue;
+    const text = messageContentText(item.message.content);
+    if (!text) continue;
+    const normalized = normalizeApprovalText(text);
+    if (!compactApprovalText(text).includes(code)) continue;
+    const hasPositiveWord = normalized.split(/\s+/).some((word) => positiveWords.has(word));
+    if (!hasPositiveWord) continue;
+    return { ok: true, messageId: item.id || "", confirmedAt: item.timestamp || new Date(ts).toISOString(), text: compactText(text, 300) };
+  }
+  return {
+    ok: false,
+    reason: "awaiting_user_confirmation",
+    detail: `No later user message in ${approval.sessionKey} contained the approval phrase.`,
+  };
+}
+
+async function validateWorkflowIntakeApproval(body, intake) {
+  const approvalInput = objectValue(body.approval);
+  const id = optionalText(body.approvalId || approvalInput.id, 120);
+  const code = optionalText(body.approvalCode || approvalInput.code, 40);
+  if (!id || !code) {
+    return {
+      ok: false,
+      mode: "approval_required",
+      reason: "missing_approval",
+      detail: "Call preview first, show the returned summary and approval phrase to the user, then call create with approvalId and approvalCode after the user replies.",
+    };
+  }
+
+  const state = await readWorkflowIntakeApprovals();
+  const approval = state.approvals.find((item) => item.id === id);
+  if (!approval) {
+    return { ok: false, mode: "approval_required", reason: "unknown_approval", detail: "Approval id was not found. Run preview again." };
+  }
+  if (approval.status === "used" || approval.status === "creating") {
+    return { ok: false, mode: "approval_consumed", reason: "approval_consumed", detail: "This approval was already used." };
+  }
+  if (approval.expiresAtMs <= Date.now()) {
+    return { ok: false, mode: "approval_expired", reason: "approval_expired", detail: "Approval expired. Run preview again." };
+  }
+  if (compactApprovalText(code) !== compactApprovalText(approval.code)) {
+    return { ok: false, mode: "approval_required", reason: "approval_code_mismatch", detail: "Approval code did not match the preview." };
+  }
+  if (approval.sessionKey !== intake.draft.sessionKey) {
+    return { ok: false, mode: "approval_required", reason: "session_mismatch", detail: "Approval belongs to a different OpenClaw session." };
+  }
+  if (approval.draftHash !== workflowIntakeDraftHash(intake.draft)) {
+    return { ok: false, mode: "approval_required", reason: "draft_changed", detail: "The create draft is not the same as the previewed draft. Run preview again." };
+  }
+
+  const confirmation = await findWorkflowIntakeUserConfirmation(approval);
+  if (!confirmation.ok) {
+    return {
+      ok: false,
+      mode: "awaiting_user_confirmation",
+      reason: confirmation.reason,
+      detail: confirmation.detail,
+      approval,
+    };
+  }
+
+  return { ok: true, approval, confirmation };
+}
+
 function buildWorkflowIntake(body, settings) {
   const schedule = objectValue(body.schedule);
   const delivery = objectValue(body.delivery);
@@ -566,7 +764,8 @@ function workflowIntakeSchema() {
     requiredForReady: ["sessionKey", "baseMessage or message", "scheduleMode every|cron", "every or cron", "steps[]", "replyTo unless deliveryMode is quiet/webhook"],
     safety: [
       "Preview never creates a cron job.",
-      "Create requires userConfirmed: true.",
+      "Preview returns an approval id/code and an exact phrase for the user to reply with in the selected chat.",
+      "Create requires userConfirmed: true, approvalId, approvalCode, an unchanged draft, and a later user-role chat message containing the approval phrase.",
       "Jobs created through this tool default to disabled.",
       "Activation requires enabled: true, userConfirmed: true, and allowEnable: true.",
       "The cron prompt receives only the active step plus a read-only past-event-log link.",
@@ -585,7 +784,9 @@ function workflowIntakeSchema() {
       replyTo: "Telegram/user target for notify delivery.",
       steps: [{ name: "Current step", action: "Next action", done: "Done when", note: "State note" }],
       questions: "Optional follow-up questions. If present, preview returns needs_clarification.",
-      userConfirmed: "Required true on create after the user confirms.",
+      approvalId: "Required on create. Use the id returned by preview.",
+      approvalCode: "Required on create. Use the code returned by preview after the user replied with the approval phrase.",
+      userConfirmed: "Required true on create after the user replies with the approval phrase in the selected chat.",
       allowEnable: "Required true with enabled:true if the user explicitly asked to activate immediately.",
     },
   };
@@ -602,11 +803,12 @@ function workflowIntakeDocs() {
     "1. Read this page once.",
     `2. POST a draft to ${base}/api/agent-tools/workflow-intake/preview.`,
     "3. If mode is needs_clarification, ask the returned questions in the same user chat.",
-    "4. If mode is needs_confirmation, summarize schedule, delivery, and steps, then ask the user to confirm.",
-    `5. After the user confirms, POST the same draft to ${base}/api/agent-tools/workflow-intake/create with userConfirmed:true. Only set enabled:true and allowEnable:true if the user explicitly asked for the job to run immediately.`,
+    "4. If mode is needs_confirmation, summarize schedule, delivery, and steps, then ask the user to reply with approval.phrase exactly.",
+    `5. After that later user reply is visible in the same OpenClaw session, POST the same draft to ${base}/api/agent-tools/workflow-intake/create with userConfirmed:true, approvalId, and approvalCode. Only set enabled:true and allowEnable:true if the user explicitly asked for the job to run immediately.`,
     "",
     "Important:",
     "- Do not create a job from a vague hint without previewing and resolving missing fields.",
+    "- Do not call create just because you have the approval code. The backend checks the selected chat transcript for a later user-role confirmation message.",
     "- Keep future and previous rows out of the cron prompt. Automator stores them and rewrites the cron message when the active row advances.",
     "- If a step is blocked or fails, the controller keeps the same active row for the next run.",
     "- Use isolated cron sessions unless the user explicitly wants the main chat timeline to grow.",
@@ -1501,7 +1703,13 @@ async function handleApi(req, res, pathname) {
   if (req.method === "POST" && pathname === "/api/agent-tools/workflow-intake/preview") {
     const settings = await readSettings();
     const body = await readJsonBody(req);
-    jsonResponse(res, 200, buildWorkflowIntake(body, settings));
+    const intake = buildWorkflowIntake({ ...body, userConfirmed: false, confirm: false }, settings);
+    const approval = intake.ready ? await createWorkflowIntakeApproval(intake) : null;
+    jsonResponse(res, 200, {
+      ...intake,
+      approvalRequired: Boolean(approval),
+      approval: publicWorkflowIntakeApproval(approval),
+    });
     return;
   }
   if (req.method === "POST" && pathname === "/api/agent-tools/workflow-intake/create") {
@@ -1512,11 +1720,41 @@ async function handleApi(req, res, pathname) {
       jsonResponse(res, 200, intake);
       return;
     }
+    const approval = await validateWorkflowIntakeApproval(body, intake);
+    if (!approval.ok) {
+      jsonResponse(res, 200, {
+        ...intake,
+        mode: approval.mode,
+        created: false,
+        approvalRequired: true,
+        approval: publicWorkflowIntakeApproval(approval.approval),
+        approvalError: {
+          reason: approval.reason,
+          detail: approval.detail,
+        },
+      });
+      return;
+    }
+    await updateWorkflowIntakeApproval(approval.approval.id, {
+      status: "creating",
+      confirmedAt: approval.confirmation.confirmedAt,
+      confirmationMessageId: approval.confirmation.messageId,
+    });
     const result = await createCronWorkflow(intake.draft, settings);
+    await updateWorkflowIntakeApproval(approval.approval.id, {
+      status: result.ok ? "used" : "failed",
+      workflowId: result.workflow?.id || "",
+      jobId: result.workflow?.jobId || "",
+    });
     jsonResponse(res, 200, {
       ...intake,
       mode: result.ok ? "created" : "create_failed",
       created: result.ok,
+      approval: {
+        ...publicWorkflowIntakeApproval(approval.approval),
+        confirmedAt: approval.confirmation.confirmedAt,
+        confirmationMessageId: approval.confirmation.messageId,
+      },
       result,
     });
     return;

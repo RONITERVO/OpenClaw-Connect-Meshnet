@@ -32,7 +32,7 @@ What it does:
 - shows an always-visible safety check when context, cron session, and reply destination do not line up
 - can use a spreadsheet-style step-plan controller that advances one repeating cron only after the agent reports the active step complete
 - keeps previous/future workflow rows out of cron prompts while exposing a focused read-only past-events log for the agent and user
-- exposes a local workflow-intake tool so an OpenClaw agent can turn a short Telegram/webchat hint into a previewed step-controller cron, ask follow-ups when needed, and create it only after user confirmation
+- exposes a local workflow-intake tool so an OpenClaw agent can turn a short Telegram/webchat hint into a previewed step-controller cron, ask follow-ups when needed, and create it only after Automator sees a later user approval reply in that chat
 - shows delayed contextual labels after a 5-second hover, with Simple and Detailed modes
 - links known OpenClaw flags inside Detailed labels to the relevant official docs pages
 - keeps an opened label visible while you move to its docs links, until you click `x`, click elsewhere, or press Escape
@@ -61,8 +61,9 @@ Use it when the user sends a short message like `weekday invoice followup` in Te
 
 The tool is intentionally narrow:
 
-- preview has no side effects
-- create requires `userConfirmed: true`
+- preview has no cron side effects
+- preview returns an approval id/code and the exact phrase the user must reply with
+- create requires `userConfirmed: true`, `approvalId`, `approvalCode`, the same previewed draft, and a later user-role chat message containing the approval phrase
 - jobs default to disabled through this path
 - activation requires `enabled: true`, `allowEnable: true`, and explicit confirmation
 - the saved cron prompt receives only the active step plus a read-only event-log URL
@@ -70,7 +71,7 @@ The tool is intentionally narrow:
 Example instruction to paste to an OpenClaw agent:
 
 ```text
-Use the local Automator workflow intake tool at http://127.0.0.1:18890/agent-tools/workflow-intake. Convert my short request into a safe step-controller cron draft. If anything is unclear, ask me follow-up questions first. Before creating anything, summarize the exact schedule, delivery route, and step rows, then wait for my confirmation.
+Use the local Automator workflow intake tool at http://127.0.0.1:18890/agent-tools/workflow-intake. Convert my short request into a safe step-controller cron draft. If anything is unclear, ask me follow-up questions first. Before creating anything, summarize the exact schedule, delivery route, and step rows, then ask me to reply with the preview approval phrase.
 ```
 
 ## OpenClaw Tunnel

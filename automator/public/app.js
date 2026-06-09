@@ -135,7 +135,7 @@ const helpCatalog = {
   agentIntake: {
     title: "Agent tool",
     simple: "Open instructions that an agent can use to build a safe step workflow for you.",
-    detailed: "Opens Automator's local workflow-intake contract. An OpenClaw agent can read this page, POST a no-side-effect preview, ask follow-up questions when required fields are missing, and create a step-controller cron only after userConfirmed:true.",
+    detailed: "Opens Automator's local workflow-intake contract. An OpenClaw agent can read this page, POST a preview, ask follow-up questions, and create only after Automator sees a later user approval reply in the selected OpenClaw chat.",
   },
   modeNow: {
     title: "Tell agent",
