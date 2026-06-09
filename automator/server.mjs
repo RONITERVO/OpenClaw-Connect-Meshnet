@@ -18,7 +18,7 @@ const auditPath = join(stateDir, "automation-log.jsonl");
 const defaultGatewayHttp = process.env.OPENCLAW_AUTOMATOR_GATEWAY_HTTP || "http://127.0.0.1:18789";
 const openclawCommand = process.env.OPENCLAW_BIN || (process.platform === "win32" ? "openclaw.cmd" : "openclaw");
 const openclawMjs = process.env.APPDATA ? join(process.env.APPDATA, "npm", "node_modules", "openclaw", "openclaw.mjs") : "";
-const appVersion = "0.4.11";
+const appVersion = "0.4.12";
 
 const contentTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -1203,6 +1203,16 @@ async function serveWorkflowLog(res, pathname) {
   textResponse(res, 200, workflowLogText(await buildWorkflowLog(workflow)));
 }
 
+async function serveWorkflowLogJson(res, pathname) {
+  const id = decodeURIComponent(pathname.split("/")[2] || "");
+  const workflow = await readWorkflow(id);
+  if (!workflow) {
+    errorResponse(res, 404, "Workflow not found.");
+    return;
+  }
+  jsonResponse(res, 200, await buildWorkflowLog(workflow));
+}
+
 async function handleApi(req, res, pathname) {
   if (req.method === "GET" && pathname === "/api/health") {
     jsonResponse(res, 200, { ok: true, app: "OpenClaw Automator", version: appVersion, port });
@@ -1322,6 +1332,10 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url || "/", `http://${req.headers.host || `127.0.0.1:${port}`}`);
     if (url.pathname.startsWith("/api/")) {
       await handleApi(req, res, url.pathname);
+      return;
+    }
+    if (req.method === "GET" && url.pathname.startsWith("/workflows/") && url.pathname.endsWith("/events.json")) {
+      await serveWorkflowLogJson(res, url.pathname);
       return;
     }
     if (req.method === "GET" && url.pathname.startsWith("/workflows/") && (url.pathname.endsWith("/events.txt") || /^\/workflows\/[^/]+\/?$/.test(url.pathname))) {
