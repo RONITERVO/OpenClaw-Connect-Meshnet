@@ -23,16 +23,75 @@ function Get-PortOwnerIds {
         Select-Object -ExpandProperty OwningProcess -Unique)
 }
 
+function Get-ProcessCommandLine {
+    param([int] $ProcessId)
+    try {
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction Stop
+        return [string] $process.CommandLine
+    } catch {
+        return ""
+    }
+}
+
+function Test-AutomatorProcess {
+    param(
+        [int] $ProcessId,
+        [string] $ExpectedServerPath
+    )
+    $commandLine = (Get-ProcessCommandLine -ProcessId $ProcessId).ToLowerInvariant()
+    if (-not $commandLine) {
+        return $false
+    }
+    $expected = $ExpectedServerPath.ToLowerInvariant()
+    return ($commandLine.Contains($expected) -or
+        $commandLine.Contains("automator/server.mjs") -or
+        $commandLine.Contains("automator\server.mjs"))
+}
+
+function Stop-AutomatorProcessElevated {
+    param(
+        [int] $ProcessId,
+        [string] $ExpectedServerPath
+    )
+    $escapedPath = $ExpectedServerPath.Replace("'", "''")
+    $script = @"
+`$processId = $ProcessId
+`$expectedServerPath = '$escapedPath'.ToLowerInvariant()
+`$process = Get-CimInstance Win32_Process -Filter "ProcessId = `$processId" -ErrorAction SilentlyContinue
+if (-not `$process) { exit 0 }
+`$commandLine = ([string] `$process.CommandLine).ToLowerInvariant()
+if (-not (`$commandLine.Contains(`$expectedServerPath) -or `$commandLine.Contains('automator/server.mjs') -or `$commandLine.Contains('automator\server.mjs'))) {
+    Write-Error "PID `$processId is not an OpenClaw Automator server."
+    exit 2
+}
+Stop-Process -Id `$processId -Force -ErrorAction Stop
+"@
+    $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($script))
+    Write-Host "Requesting administrator permission to stop existing Automator PID $ProcessId..."
+    $process = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encoded) -Verb RunAs -Wait -PassThru
+    return ($process.ExitCode -eq 0)
+}
+
 function Stop-PortOwners {
-    param([int] $TargetPort)
+    param(
+        [int] $TargetPort,
+        [string] $ExpectedServerPath
+    )
     $ownerIds = @(Get-PortOwnerIds -TargetPort $TargetPort)
     foreach ($ownerId in $ownerIds) {
+        if (-not (Test-AutomatorProcess -ProcessId $ownerId -ExpectedServerPath $ExpectedServerPath)) {
+            $commandLine = Get-ProcessCommandLine -ProcessId $ownerId
+            throw "Port $TargetPort is owned by PID $ownerId, but it does not look like OpenClaw Automator. Command line: $commandLine"
+        }
         try {
             $process = Get-Process -Id $ownerId -ErrorAction Stop
             Write-Host "Stopping existing Automator listener on port $TargetPort (PID $ownerId, $($process.ProcessName))..."
             Stop-Process -Id $ownerId -Force -ErrorAction Stop
         } catch {
             Write-Host "WARNING: Could not stop PID $ownerId on port ${TargetPort}: $($_.Exception.Message)" -ForegroundColor Yellow
+            if (-not (Stop-AutomatorProcessElevated -ProcessId $ownerId -ExpectedServerPath $ExpectedServerPath)) {
+                throw "Could not stop existing Automator listener PID $ownerId. Close it manually or rerun this launcher as administrator."
+            }
         }
     }
 }
@@ -75,7 +134,7 @@ New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
 $healthUrl = "http://127.0.0.1:$Port/api/health"
 $appUrl = "http://127.0.0.1:$Port/"
 
-Stop-PortOwners -TargetPort $Port
+Stop-PortOwners -TargetPort $Port -ExpectedServerPath $serverPath
 
 if (Test-Path -LiteralPath $pidPath) {
     Remove-Item -LiteralPath $pidPath -Force -ErrorAction SilentlyContinue
