@@ -53,7 +53,6 @@ const els = {
   workflowStepPlanToggle: $("workflowStepPlanToggle"),
   workflowNameInput: $("workflowNameInput"),
   workflowRows: $("workflowRows"),
-  workflowStepsInput: $("workflowStepsInput"),
   addStepBtn: $("addStepBtn"),
   copyLastStepBtn: $("copyLastStepBtn"),
   clearEmptyStepsBtn: $("clearEmptyStepsBtn"),
@@ -550,35 +549,13 @@ function stepHasContent(step) {
   return Boolean(step.name || step.action || step.done || step.note);
 }
 
-function parseWorkflowStepLines(value = "") {
-  if (Array.isArray(value)) {
-    return value
+function normalizeWorkflowSteps(value = []) {
+  return Array.isArray(value)
+    ? value
       .map((step, index) => normalizeWorkflowStep(step, index))
       .filter(stepHasContent)
-      .map((step, index) => ({ ...step, index }));
-  }
-  return String(value)
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line, index) => {
-      const [name, action, done, note] = line.split("|").map((part) => part.trim());
-      return {
-        index,
-        name: name || line,
-        action: action || name || line,
-        done: done || "",
-        note: note || "",
-      };
-    });
-}
-
-function serializeWorkflowSteps(steps) {
-  return steps
-    .map((step) => [step.name, step.action, step.done, step.note]
-      .map((value) => String(value || "").replace(/\s+/g, " ").trim())
-      .join(" | "))
-    .join("\n");
+      .map((step, index) => ({ ...step, index }))
+    : [];
 }
 
 function createWorkflowRow(step = {}, index = 0) {
@@ -629,26 +606,17 @@ function readWorkflowRows({ includeEmpty = false } = {}) {
   return filtered.map((step, index) => ({ ...step, index }));
 }
 
-function syncWorkflowStepsInput() {
-  const steps = readWorkflowRows();
-  els.workflowStepsInput.value = serializeWorkflowSteps(steps);
-  return steps;
-}
-
 function addWorkflowRow(step = {}, options = {}) {
   const row = createWorkflowRow(step, els.workflowRows.children.length);
   els.workflowRows.appendChild(row);
   renumberWorkflowRows();
-  syncWorkflowStepsInput();
   if (options.focus) row.querySelector(`[data-step-field="${options.focus}"]`)?.focus();
   return row;
 }
 
 function ensureWorkflowRows() {
   if (els.workflowRows.children.length) return;
-  const seeded = parseWorkflowStepLines(els.workflowStepsInput.value);
-  if (seeded.length) seeded.forEach((step) => addWorkflowRow(step));
-  else addWorkflowRow();
+  addWorkflowRow();
 }
 
 function removeEmptyWorkflowRows() {
@@ -658,7 +626,6 @@ function removeEmptyWorkflowRows() {
   });
   if (!els.workflowRows.children.length) addWorkflowRow();
   renumberWorkflowRows();
-  syncWorkflowStepsInput();
 }
 
 function copyWorkflowRowDown(row = null) {
@@ -686,22 +653,20 @@ function copyWorkflowRowDown(row = null) {
     renumberWorkflowRows();
     newRow.querySelector('[data-step-field="name"]')?.focus();
   }
-  syncWorkflowStepsInput();
 }
 
 function workflowFields() {
-  const steps = syncWorkflowStepsInput();
+  const steps = readWorkflowRows();
   return {
     stepPlanEnabled: Boolean(els.workflowStepPlanToggle?.checked),
     name: els.workflowNameInput.value.trim(),
     steps,
-    stepsText: serializeWorkflowSteps(steps),
   };
 }
 
 function updateWorkflowSummary() {
   const fields = workflowFields();
-  const steps = parseWorkflowStepLines(fields.steps);
+  const steps = normalizeWorkflowSteps(fields.steps);
   if (!fields.stepPlanEnabled) {
     els.workflowSummary.textContent = "Off";
   } else if (steps.length) {
@@ -1363,7 +1328,7 @@ function buildSafetyItems(payload) {
   }
 
   if (isCron && payload.workflow?.stepPlanEnabled) {
-    const stepCount = parseWorkflowStepLines(payload.workflow.steps || payload.workflow.stepsText || "").length;
+    const stepCount = normalizeWorkflowSteps(payload.workflow.steps).length;
     const supportsStepController = payload.scheduleMode === "every" || payload.scheduleMode === "cron";
     items.push({
       caseId: "stepController",
@@ -1536,7 +1501,6 @@ document.addEventListener("click", (event) => {
       row?.remove();
       if (!els.workflowRows.children.length) addWorkflowRow();
       renumberWorkflowRows();
-      syncWorkflowStepsInput();
     }
     updatePreview();
     return;
@@ -1642,11 +1606,9 @@ window.addEventListener("resize", refreshVisibleHelpPosition);
 });
 
 els.workflowRows.addEventListener("input", () => {
-  syncWorkflowStepsInput();
   updatePreview();
 });
 els.workflowRows.addEventListener("change", () => {
-  syncWorkflowStepsInput();
   updatePreview();
 });
 els.addStepBtn.addEventListener("click", () => {
