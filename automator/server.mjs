@@ -251,7 +251,7 @@ function workflowStepMessage(workflow) {
   const lines = [
     workflow.baseMessage,
     "",
-    "Important research and development, and final output to be realized on this session. Final output. Consequence: will auto apply and persist. After complete changes blocked for good. Starter info:",
+    "Important research and development, and final output to be realized on this session. Final output. Consequence: will auto apply and persist. After complete changes blocked for good, but dont mark them uneditable just call complete, claude will check this and circle this back to you and notify user only if missed something or there is something to fix. Starter info:",
     `- Workflow ID: ${workflow.id}`,
     `- Cron job ID: ${workflow.jobId || "pending"}`,
     `- Workflow: ${workflow.name || "Unnamed workflow"}`,
