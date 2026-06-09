@@ -18,7 +18,7 @@ const auditPath = join(stateDir, "automation-log.jsonl");
 const defaultGatewayHttp = process.env.OPENCLAW_AUTOMATOR_GATEWAY_HTTP || "http://127.0.0.1:18789";
 const openclawCommand = process.env.OPENCLAW_BIN || (process.platform === "win32" ? "openclaw.cmd" : "openclaw");
 const openclawMjs = process.env.APPDATA ? join(process.env.APPDATA, "npm", "node_modules", "openclaw", "openclaw.mjs") : "";
-const appVersion = "0.4.5";
+const appVersion = "0.4.6";
 
 const contentTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -209,8 +209,25 @@ async function writeWorkflow(workflow) {
   return workflow;
 }
 
-function parseWorkflowSteps(text = "") {
-  return String(text || "")
+function parseWorkflowSteps(value = "") {
+  if (Array.isArray(value)) {
+    return value
+      .map((step, index) => ({
+        index,
+        name: optionalText(step?.name, 400),
+        action: optionalText(step?.action, 1000),
+        done: optionalText(step?.done, 1000),
+        note: optionalText(step?.note, 1000),
+      }))
+      .filter((step) => step.name || step.action || step.done || step.note)
+      .map((step, index) => ({
+        ...step,
+        index,
+        name: step.name || step.action || step.done || step.note,
+        action: step.action || step.name || step.done || step.note,
+      }));
+  }
+  return String(value || "")
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
@@ -232,7 +249,7 @@ function workflowControllerRequested(body) {
   if (!workflow.stepPlanEnabled) return false;
   if (String(body.jobMode || "agent") === "system-event") return false;
   if (mode !== "every" && mode !== "cron") return false;
-  return parseWorkflowSteps(workflow.stepsText).length > 0;
+  return parseWorkflowSteps(workflow.steps || workflow.stepsText).length > 0;
 }
 
 function psSingle(value) {
@@ -566,7 +583,7 @@ async function runCommand(kind, args, timeoutMs) {
 
 async function createCronWorkflow(body, settings) {
   const workflowBody = body.workflow || {};
-  const steps = parseWorkflowSteps(workflowBody.stepsText);
+  const steps = parseWorkflowSteps(workflowBody.steps || workflowBody.stepsText);
   const workflow = {
     id: randomUUID(),
     createdAt: new Date().toISOString(),

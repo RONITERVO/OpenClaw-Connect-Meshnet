@@ -21,7 +21,7 @@ Start-OpenClaw-Automator.cmd
 - Let the backend fill reply targets for Telegram sessions.
 - Open **Advanced settings** only when you need exact schedule fields, job name/description, enabled state, session-key override, cron session target, agent/model override, tools, webhook URL, stagger/exact cron timing, wake mode, or system-event mode.
 - Watch the **Safety check** panel. It warns when the agent reads one chat/session but the answer goes somewhere else, even when that setup is technically valid.
-- Use **Step plan controller** for scheduled jobs that should move through a precise list of steps. It creates one repeating cron that advances through configured steps only after the agent reports the current step complete. Step controller jobs need the Automator backend running on `127.0.0.1:18890` when the agent reports progress.
+- Use **Step plan controller** for scheduled jobs that should move through a precise list of steps. Fill the row grid with Step name, Next action, Done when, and State note; use **Add from previous** or row-level **Copy down** when the next row only needs small edits. It creates one repeating cron that advances through configured steps only after the agent reports the current step complete. Step controller jobs need the Automator backend running on `127.0.0.1:18890` when the agent reports progress.
 - Hover on a control for 5 seconds to show contextual labels.
 - Use **Simple** labels for plain-language explanations, or **Detailed** labels to see the exact OpenClaw behavior before acting.
 - Click OpenClaw flag names inside Detailed labels, such as `--light-context`, to open the relevant official documentation page.

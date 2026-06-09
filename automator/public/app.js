@@ -52,7 +52,11 @@ const els = {
   workflowSummary: $("workflowSummary"),
   workflowStepPlanToggle: $("workflowStepPlanToggle"),
   workflowNameInput: $("workflowNameInput"),
+  workflowRows: $("workflowRows"),
   workflowStepsInput: $("workflowStepsInput"),
+  addStepBtn: $("addStepBtn"),
+  copyLastStepBtn: $("copyLastStepBtn"),
+  clearEmptyStepsBtn: $("clearEmptyStepsBtn"),
   jobNameInput: $("jobNameInput"),
   descriptionInput: $("descriptionInput"),
   sessionKeyInput: $("sessionKeyInput"),
@@ -265,8 +269,33 @@ const helpCatalog = {
   },
   workflowSteps: {
     title: "Step plan",
-    simple: "Write the long workflow as steps.",
-    detailed: "One step per line. Format: Step name | Next action | Done when | State note. The app stores the full plan locally, but each repeating cron run receives only the active step plus an advance/blocked reporting command. This avoids skipping ahead when a step fails.",
+    simple: "Fill one row for each step.",
+    detailed: "Each row has Step name, Next action, Done when, and State note. The app sends these as structured data to the backend, so users do not need to type separators or session syntax. Each repeating cron run receives only the active row plus an advance/blocked reporting command.",
+  },
+  workflowAddStep: {
+    title: "Add row",
+    simple: "Add one blank step.",
+    detailed: "Adds an empty row to the local step grid. Empty rows are ignored when the cron controller is created.",
+  },
+  workflowCopyPrevious: {
+    title: "Add from previous",
+    simple: "Copy the last row into a new row.",
+    detailed: "Creates a new row prefilled from the last non-empty step. Use this when the next step is similar and only needs small edits.",
+  },
+  workflowCopyDown: {
+    title: "Copy down",
+    simple: "Copy this row to the next row.",
+    detailed: "Copies the current row into the row below. If the next row is blank, it fills that row; otherwise it inserts a new copied row immediately below.",
+  },
+  workflowRemoveStep: {
+    title: "Remove row",
+    simple: "Delete this step row.",
+    detailed: "Removes this row from the local step grid. It does not touch saved OpenClaw cron jobs until you create a new controller job.",
+  },
+  workflowClearEmpty: {
+    title: "Clear empty rows",
+    simple: "Remove blank rows.",
+    detailed: "Removes rows where all step columns are empty. This does not remove rows with any content.",
   },
   deleteAfterRun: {
     title: "Delete after run",
@@ -507,22 +536,35 @@ function selectedDeliveryMatchesContext(payload, contextParts) {
   return Boolean(to && contextParts.target && to === contextParts.target);
 }
 
-function workflowFields() {
+function normalizeWorkflowStep(step = {}, index = 0) {
   return {
-    stepPlanEnabled: Boolean(els.workflowStepPlanToggle?.checked),
-    name: els.workflowNameInput.value.trim(),
-    stepsText: els.workflowStepsInput.value.trim(),
+    index,
+    name: String(step.name || "").trim(),
+    action: String(step.action || "").trim(),
+    done: String(step.done || "").trim(),
+    note: String(step.note || "").trim(),
   };
 }
 
-function parseWorkflowStepLines(text = "") {
-  return String(text)
+function stepHasContent(step) {
+  return Boolean(step.name || step.action || step.done || step.note);
+}
+
+function parseWorkflowStepLines(value = "") {
+  if (Array.isArray(value)) {
+    return value
+      .map((step, index) => normalizeWorkflowStep(step, index))
+      .filter(stepHasContent)
+      .map((step, index) => ({ ...step, index }));
+  }
+  return String(value)
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => {
+    .map((line, index) => {
       const [name, action, done, note] = line.split("|").map((part) => part.trim());
       return {
+        index,
         name: name || line,
         action: action || name || line,
         done: done || "",
@@ -531,9 +573,135 @@ function parseWorkflowStepLines(text = "") {
     });
 }
 
+function serializeWorkflowSteps(steps) {
+  return steps
+    .map((step) => [step.name, step.action, step.done, step.note]
+      .map((value) => String(value || "").replace(/\s+/g, " ").trim())
+      .join(" | "))
+    .join("\n");
+}
+
+function createWorkflowRow(step = {}, index = 0) {
+  const normalized = normalizeWorkflowStep(step, index);
+  const row = document.createElement("div");
+  row.className = "step-row";
+  row.dataset.stepRow = "";
+  row.setAttribute("role", "row");
+  row.innerHTML = `
+    <span class="step-number">${index + 1}</span>
+    <input data-step-field="name" type="text" value="${escapeHtml(normalized.name)}" placeholder="Step name" aria-label="Step ${index + 1} name">
+    <textarea data-step-field="action" rows="2" placeholder="Next action" aria-label="Step ${index + 1} next action">${escapeHtml(normalized.action)}</textarea>
+    <textarea data-step-field="done" rows="2" placeholder="Done when" aria-label="Step ${index + 1} done condition">${escapeHtml(normalized.done)}</textarea>
+    <textarea data-step-field="note" rows="2" placeholder="State note" aria-label="Step ${index + 1} state note">${escapeHtml(normalized.note)}</textarea>
+    <div class="step-row-actions">
+      <button class="step-action" type="button" data-step-action="copy-down" data-help-key="workflowCopyDown" title="Copy this row to the next row">Copy down</button>
+      <button class="step-action" type="button" data-step-action="remove" data-help-key="workflowRemoveStep" title="Remove this row">Remove</button>
+    </div>
+  `;
+  return row;
+}
+
+function renumberWorkflowRows() {
+  Array.from(els.workflowRows.querySelectorAll("[data-step-row]")).forEach((row, index) => {
+    row.querySelector(".step-number").textContent = String(index + 1);
+    row.querySelectorAll("[aria-label]").forEach((field) => {
+      const fieldName = field.dataset.stepField || "field";
+      const labelName = fieldName === "done" ? "done condition" : fieldName === "action" ? "next action" : fieldName === "note" ? "state note" : "name";
+      field.setAttribute("aria-label", `Step ${index + 1} ${labelName}`);
+    });
+  });
+}
+
+function rowToWorkflowStep(row, index = 0) {
+  const valueFor = (field) => row.querySelector(`[data-step-field="${field}"]`)?.value || "";
+  return normalizeWorkflowStep({
+    name: valueFor("name"),
+    action: valueFor("action"),
+    done: valueFor("done"),
+    note: valueFor("note"),
+  }, index);
+}
+
+function readWorkflowRows({ includeEmpty = false } = {}) {
+  const rows = Array.from(els.workflowRows.querySelectorAll("[data-step-row]"));
+  const steps = rows.map((row, index) => rowToWorkflowStep(row, index));
+  const filtered = includeEmpty ? steps : steps.filter(stepHasContent);
+  return filtered.map((step, index) => ({ ...step, index }));
+}
+
+function syncWorkflowStepsInput() {
+  const steps = readWorkflowRows();
+  els.workflowStepsInput.value = serializeWorkflowSteps(steps);
+  return steps;
+}
+
+function addWorkflowRow(step = {}, options = {}) {
+  const row = createWorkflowRow(step, els.workflowRows.children.length);
+  els.workflowRows.appendChild(row);
+  renumberWorkflowRows();
+  syncWorkflowStepsInput();
+  if (options.focus) row.querySelector(`[data-step-field="${options.focus}"]`)?.focus();
+  return row;
+}
+
+function ensureWorkflowRows() {
+  if (els.workflowRows.children.length) return;
+  const seeded = parseWorkflowStepLines(els.workflowStepsInput.value);
+  if (seeded.length) seeded.forEach((step) => addWorkflowRow(step));
+  else addWorkflowRow();
+}
+
+function removeEmptyWorkflowRows() {
+  const rows = Array.from(els.workflowRows.querySelectorAll("[data-step-row]"));
+  rows.forEach((row, index) => {
+    if (!stepHasContent(rowToWorkflowStep(row, index))) row.remove();
+  });
+  if (!els.workflowRows.children.length) addWorkflowRow();
+  renumberWorkflowRows();
+  syncWorkflowStepsInput();
+}
+
+function copyWorkflowRowDown(row = null) {
+  const rows = Array.from(els.workflowRows.querySelectorAll("[data-step-row]"));
+  const source = row || rows.slice().reverse().find((candidate, indexFromEnd) => {
+    const actualIndex = rows.length - 1 - indexFromEnd;
+    return stepHasContent(rowToWorkflowStep(candidate, actualIndex));
+  }) || rows[rows.length - 1];
+  if (!source) {
+    addWorkflowRow({}, { focus: "name" });
+    return;
+  }
+  const sourceIndex = rows.indexOf(source);
+  const step = rowToWorkflowStep(source, sourceIndex);
+  const target = rows[sourceIndex + 1];
+  if (target && !stepHasContent(rowToWorkflowStep(target, sourceIndex + 1))) {
+    ["name", "action", "done", "note"].forEach((field) => {
+      const input = target.querySelector(`[data-step-field="${field}"]`);
+      if (input) input.value = step[field];
+    });
+    target.querySelector('[data-step-field="name"]')?.focus();
+  } else {
+    const newRow = createWorkflowRow(step, sourceIndex + 1);
+    source.after(newRow);
+    renumberWorkflowRows();
+    newRow.querySelector('[data-step-field="name"]')?.focus();
+  }
+  syncWorkflowStepsInput();
+}
+
+function workflowFields() {
+  const steps = syncWorkflowStepsInput();
+  return {
+    stepPlanEnabled: Boolean(els.workflowStepPlanToggle?.checked),
+    name: els.workflowNameInput.value.trim(),
+    steps,
+    stepsText: serializeWorkflowSteps(steps),
+  };
+}
+
 function updateWorkflowSummary() {
   const fields = workflowFields();
-  const steps = parseWorkflowStepLines(fields.stepsText);
+  const steps = parseWorkflowStepLines(fields.steps);
   if (!fields.stepPlanEnabled) {
     els.workflowSummary.textContent = "Off";
   } else if (steps.length) {
@@ -1195,7 +1363,7 @@ function buildSafetyItems(payload) {
   }
 
   if (isCron && payload.workflow?.stepPlanEnabled) {
-    const stepCount = parseWorkflowStepLines(payload.workflow.stepsText || "").length;
+    const stepCount = parseWorkflowStepLines(payload.workflow.steps || payload.workflow.stepsText || "").length;
     const supportsStepController = payload.scheduleMode === "every" || payload.scheduleMode === "cron";
     items.push({
       caseId: "stepController",
@@ -1359,6 +1527,20 @@ document.addEventListener("click", (event) => {
   if (deliveryPresetButton) {
     setDeliveryMode(deliveryPresetButton.dataset.deliveryMode);
   }
+  const stepActionButton = event.target.closest("[data-step-action]");
+  if (stepActionButton) {
+    const row = stepActionButton.closest("[data-step-row]");
+    if (stepActionButton.dataset.stepAction === "copy-down") {
+      copyWorkflowRowDown(row);
+    } else if (stepActionButton.dataset.stepAction === "remove") {
+      row?.remove();
+      if (!els.workflowRows.children.length) addWorkflowRow();
+      renumberWorkflowRows();
+      syncWorkflowStepsInput();
+    }
+    updatePreview();
+    return;
+  }
   const tile = event.target.closest(".mode-tile");
   if (tile) setMode(tile.dataset.mode);
 });
@@ -1431,7 +1613,6 @@ window.addEventListener("resize", refreshVisibleHelpPosition);
     els.bestEffortDeliveryToggle,
     els.workflowStepPlanToggle,
     els.workflowNameInput,
-    els.workflowStepsInput,
     els.jobNameInput,
     els.descriptionInput,
     els.sessionKeyInput,
@@ -1460,11 +1641,32 @@ window.addEventListener("resize", refreshVisibleHelpPosition);
   }));
 });
 
+els.workflowRows.addEventListener("input", () => {
+  syncWorkflowStepsInput();
+  updatePreview();
+});
+els.workflowRows.addEventListener("change", () => {
+  syncWorkflowStepsInput();
+  updatePreview();
+});
+els.addStepBtn.addEventListener("click", () => {
+  addWorkflowRow({}, { focus: "name" });
+  updatePreview();
+});
+els.copyLastStepBtn.addEventListener("click", () => {
+  copyWorkflowRowDown();
+  updatePreview();
+});
+els.clearEmptyStepsBtn.addEventListener("click", () => {
+  removeEmptyWorkflowRows();
+  updatePreview();
+});
 els.sessionSearch.addEventListener("input", renderSessions);
 els.refreshBtn.addEventListener("click", () => load().catch((error) => setResult(error.message, true)));
 els.primaryAction.addEventListener("click", runPrimary);
 els.previewBtn.addEventListener("click", previewNow);
 
+ensureWorkflowRows();
 setHelpMode(state.helpMode);
 load().catch((error) => {
   els.statusLine.textContent = "Could not load OpenClaw state";

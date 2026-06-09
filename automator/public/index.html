@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OpenClaw Automator</title>
-  <link rel="stylesheet" href="./styles.css?v=0.4.5">
+  <link rel="stylesheet" href="./styles.css?v=0.4.6">
 </head>
 <body>
   <main class="shell">
@@ -198,10 +198,26 @@
                 <span>Workflow</span>
                 <input id="workflowNameInput" type="text" placeholder="PR review, long build, research task">
               </label>
-              <label class="field wide-field" data-help-key="workflowSteps">
+              <div class="field wide-field" data-help-key="workflowSteps">
                 <span>Step plan</span>
-                <textarea id="workflowStepsInput" rows="5" placeholder="One step per line: Step name | Next action | Done when | State note"></textarea>
-              </label>
+                <div class="step-grid" id="workflowStepGrid" role="table" aria-label="Step plan">
+                  <div class="step-row step-head" role="row">
+                    <span>#</span>
+                    <span>Step name</span>
+                    <span>Next action</span>
+                    <span>Done when</span>
+                    <span>State note</span>
+                    <span>Actions</span>
+                  </div>
+                  <div id="workflowRows" class="step-rows"></div>
+                </div>
+                <div class="step-toolbar">
+                  <button id="addStepBtn" class="secondary-button" type="button" data-help-key="workflowAddStep">Add row</button>
+                  <button id="copyLastStepBtn" class="secondary-button" type="button" data-help-key="workflowCopyPrevious">Add from previous</button>
+                  <button id="clearEmptyStepsBtn" class="secondary-button" type="button" data-help-key="workflowClearEmpty">Clear empty rows</button>
+                </div>
+                <textarea id="workflowStepsInput" hidden></textarea>
+              </div>
             </div>
           </section>
           <div class="advanced-grid">
@@ -330,6 +346,6 @@
     </div>
     <div id="helpBubbleText" class="help-text"></div>
   </div>
-  <script src="./app.js?v=0.4.5" type="module"></script>
+  <script src="./app.js?v=0.4.6" type="module"></script>
 </body>
 </html>
