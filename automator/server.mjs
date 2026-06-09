@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
-import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -18,7 +18,7 @@ const auditPath = join(stateDir, "automation-log.jsonl");
 const defaultGatewayHttp = process.env.OPENCLAW_AUTOMATOR_GATEWAY_HTTP || "http://127.0.0.1:18789";
 const openclawCommand = process.env.OPENCLAW_BIN || (process.platform === "win32" ? "openclaw.cmd" : "openclaw");
 const openclawMjs = process.env.APPDATA ? join(process.env.APPDATA, "npm", "node_modules", "openclaw", "openclaw.mjs") : "";
-const appVersion = "0.4.7";
+const appVersion = "0.4.8";
 
 const contentTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -51,6 +51,14 @@ function jsonResponse(res, status, payload) {
     "cache-control": "no-store",
   });
   res.end(body);
+}
+
+function textResponse(res, status, body) {
+  res.writeHead(status, {
+    "content-type": "text/plain; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  res.end(String(body ?? ""));
 }
 
 function errorResponse(res, status, message, detail = null) {
@@ -150,8 +158,8 @@ function execOpenClaw(args, options = {}) {
         code: error?.code ?? 0,
         signal: error?.signal || null,
         args,
-        stdout: compactText(stdout || ""),
-        stderr: compactText(stderr || ""),
+        stdout: compactText(stdout || "", Number(options.stdoutMax || 6000)),
+        stderr: compactText(stderr || "", Number(options.stderrMax || 6000)),
         error: error ? compactText(error.message || String(error)) : "",
       });
     });
@@ -199,7 +207,11 @@ function workflowPath(id) {
 }
 
 async function readWorkflow(id) {
-  return parseJson(await readFile(workflowPath(id), "utf8"), null);
+  try {
+    return parseJson(await readFile(workflowPath(id), "utf8"), null);
+  } catch {
+    return null;
+  }
 }
 
 async function writeWorkflow(workflow) {
@@ -207,6 +219,68 @@ async function writeWorkflow(workflow) {
   workflow.updatedAt = new Date().toISOString();
   await writeFile(workflowPath(workflow.id), `${JSON.stringify(workflow, null, 2)}\n`, "utf8");
   return workflow;
+}
+
+function workflowLogUrl(workflow) {
+  return `http://127.0.0.1:${port}/workflows/${workflow.id}/events.txt`;
+}
+
+function activeWorkflowStep(workflow) {
+  return workflow.steps?.[workflow.currentIndex] || workflow.steps?.[workflow.steps.length - 1] || null;
+}
+
+function workflowStepLabel(step) {
+  if (!step) return "";
+  return `step ${Number(step.index || 0) + 1}: ${step.name || step.action || "unnamed step"}`;
+}
+
+function workflowEvent(workflow, type, detail = {}) {
+  const step = detail.step || activeWorkflowStep(workflow);
+  const clean = {
+    id: randomUUID(),
+    at: new Date().toISOString(),
+    type,
+    status: detail.status || workflow.status || "unknown",
+    stepIndex: Number.isInteger(detail.stepIndex) ? detail.stepIndex : step?.index ?? null,
+    stepName: detail.stepName || step?.name || "",
+    title: optionalText(detail.title || type, 220),
+    detail: optionalText(detail.detail, 2000),
+    command: optionalText(detail.command, 2000),
+    result: optionalText(detail.result, 2000),
+  };
+  workflow.events = Array.isArray(workflow.events) ? workflow.events : [];
+  workflow.events.push(clean);
+  if (workflow.events.length > 500) workflow.events = workflow.events.slice(-500);
+  return clean;
+}
+
+async function listWorkflows() {
+  await ensureStateDir();
+  let names = [];
+  try {
+    names = await readdir(workflowsDir);
+  } catch {
+    return [];
+  }
+  const workflows = await Promise.all(names
+    .filter((name) => name.endsWith(".json"))
+    .map(async (name) => {
+      try {
+        return parseJson(await readFile(join(workflowsDir, name), "utf8"), null);
+      } catch {
+        return null;
+      }
+    }));
+  return workflows.filter((workflow) => workflow?.id);
+}
+
+async function workflowMapByJobId() {
+  const workflows = await listWorkflows();
+  const map = new Map();
+  for (const workflow of workflows) {
+    if (workflow.jobId) map.set(workflow.jobId, workflow);
+  }
+  return map;
 }
 
 function parseWorkflowSteps(value = []) {
@@ -242,7 +316,7 @@ function psSingle(value) {
 }
 
 function workflowAdvanceCommand(workflow, step, status) {
-  const body = `@{ jobId = '${psSingle(workflow.jobId)}'; stepIndex = ${step.index}; status = '${status}'; summary = 'replace with short result' } | ConvertTo-Json -Compress`;
+  const body = `@{ jobId = '${psSingle(workflow.jobId)}'; stepIndex = ${step.index}; status = '${status}' } | ConvertTo-Json -Compress`;
   return `powershell -NoProfile -ExecutionPolicy Bypass -Command "$body = ${body}; Invoke-RestMethod -Method POST -Uri 'http://127.0.0.1:${port}/api/workflows/${workflow.id}/advance' -ContentType 'application/json' -Body $body"`;
 }
 
@@ -255,6 +329,7 @@ function workflowStepMessage(workflow) {
     `- Workflow ID: ${workflow.id}`,
     `- Cron job ID: ${workflow.jobId || "pending"}`,
     `- Workflow: ${workflow.name || "Unnamed workflow"}`,
+    `- Focused past event log, read only if needed: ${workflowLogUrl(workflow)}`,
     //`- Active step: ${step.index + 1} of ${workflow.steps.length}`,
     `- Research and development name: ${step.name}`,
     `- Deep thinking, safetywork, background work an concrete problem solving on: ${step.action}. Then minimal most efficient output that resolves this longterm and does not need to be patched in the future by claude. If the job is impossible for you; stop, then research online or ask. But if you are capable getting this done then go ahead.`,
@@ -317,6 +392,313 @@ function deliveryForSession(session) {
     account: "",
     reason: "No channel delivery target detected",
   };
+}
+
+function sessionArtifactPath(session, suffix) {
+  if (!session?.agentId || !session?.sessionId) return null;
+  return join(homedir(), ".openclaw", "agents", session.agentId, "sessions", `${session.sessionId}${suffix}`);
+}
+
+async function readJsonlTail(file, limit = 160) {
+  if (!file) return [];
+  try {
+    const text = await readFile(file, "utf8");
+    return text
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .slice(-limit)
+      .map((line) => parseJson(line, null))
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function textFromContent(content, max = 360) {
+  if (typeof content === "string") return compactText(content, max);
+  if (!Array.isArray(content)) return "";
+  const parts = [];
+  for (const item of content) {
+    if (typeof item === "string") parts.push(item);
+    else if (item?.type === "text" && item.text) parts.push(item.text);
+    else if (item?.type === "toolResult" && (item.text || item.content)) parts.push(item.text || item.content);
+    else if (item?.type === "image" || item?.mimeType?.startsWith?.("image/")) parts.push("[image]");
+  }
+  return compactText(parts.join(" "), max);
+}
+
+function compactValue(value, max = 220) {
+  if (value == null) return "";
+  if (typeof value === "string") return compactText(value, max);
+  return compactText(JSON.stringify(value), max);
+}
+
+function sessionEventFields(session) {
+  return {
+    source: "openclaw",
+    sessionKey: session?.key || "",
+    sessionId: session?.sessionId || "",
+    sessionKind: session?.kind || "",
+  };
+}
+
+function toolCommandFromMessage(message, session) {
+  const calls = Array.isArray(message?.content) ? message.content.filter((item) => item?.type === "toolCall") : [];
+  return calls.map((call) => ({
+    id: call.id || call.toolCallId || "",
+    at: message.timestamp || null,
+    type: "tool.call",
+    status: "running",
+    title: `${call.name || "tool"} requested`,
+    detail: compactValue(call.arguments?.command || call.input?.command || call.arguments || call.input || "", 260),
+    ...sessionEventFields(session),
+  }));
+}
+
+function parseTranscriptEvents(lines, session) {
+  const events = [];
+  for (const row of lines) {
+    const message = row.message || {};
+    const at = row.timestamp || message.timestamp || null;
+    if (message.role === "assistant") {
+      const text = textFromContent(message.content, 420);
+      if (text) {
+        events.push({
+          at,
+          type: "agent.message",
+          status: "done",
+          title: "Agent message",
+          detail: text,
+          ...sessionEventFields(session),
+        });
+      }
+      events.push(...toolCommandFromMessage(message, session));
+    } else if (message.role === "toolResult") {
+      events.push({
+        id: message.toolCallId || "",
+        at,
+        type: "tool.result",
+        status: message.isError ? "failed" : "done",
+        title: `${message.toolName || "tool"} ${message.isError ? "failed" : "completed"}`,
+        detail: textFromContent(message.content, 420),
+        ...sessionEventFields(session),
+      });
+    }
+  }
+  return events.filter((event) => event.title);
+}
+
+function parseTrajectoryEvents(lines, session) {
+  const events = [];
+  for (const row of lines) {
+    const data = row.data || {};
+    if (row.type === "tool.call") {
+      events.push({
+        id: data.toolCallId || "",
+        at: row.ts,
+        type: "trajectory.tool.call",
+        status: "running",
+        title: `${data.name || "tool"} command`,
+        detail: compactValue(data.arguments?.command || data.arguments || "", 260),
+        ...sessionEventFields(session),
+      });
+    } else if (row.type === "tool.result") {
+      events.push({
+        id: data.toolCallId || "",
+        at: row.ts,
+        type: "trajectory.tool.result",
+        status: data.isError ? "failed" : "done",
+        title: `${data.name || "tool"} ${data.isError ? "failed" : "finished"}`,
+        detail: compactText(data.output || JSON.stringify(data.result || ""), 420),
+        durationMs: data.result?.durationMs ?? null,
+        ...sessionEventFields(session),
+      });
+    }
+  }
+  return events.filter((event) => event.title);
+}
+
+function eventMs(event) {
+  const raw = event?.at;
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric) && numeric > 1000000000000) return numeric;
+  const value = raw ? Date.parse(raw) : NaN;
+  return Number.isFinite(value) ? value : 0;
+}
+
+function dedupeEvents(events) {
+  const seen = new Set();
+  const deduped = [];
+  for (const event of events) {
+    const key = [event.at || "", event.type || "", event.title || "", event.detail || "", event.sessionId || ""].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(event);
+  }
+  return deduped;
+}
+
+function workflowSessionCandidates(workflow, sessionsJson) {
+  const sessions = Array.isArray(sessionsJson?.sessions) ? sessionsJson.sessions : [];
+  const createdAtMs = Date.parse(workflow.createdAt || "") || 0;
+  const sourceKey = workflow.sessionKey || "";
+  const jobId = workflow.jobId || "";
+  return sessions
+    .filter((session) => {
+      const key = String(session.key || "");
+      const updatedAt = Number(session.updatedAt || 0);
+      if (sourceKey && key === sourceKey && updatedAt >= createdAtMs - 5 * 60 * 1000) return true;
+      if (jobId && key.includes(`:cron:${jobId}`)) return true;
+      if (jobId && key.endsWith(jobId)) return true;
+      if (!jobId && session.kind === "cron" && updatedAt >= createdAtMs - 5 * 60 * 1000) return true;
+      return false;
+    })
+    .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))
+    .slice(0, 8);
+}
+
+async function collectWorkflowOpenClawEvents(workflow) {
+  const sessionsResult = await execOpenClaw(["sessions", "--all-agents", "--json", "--limit", "all"], {
+    timeoutMs: 15000,
+    stdoutMax: 2 * 1024 * 1024,
+  });
+  if (!sessionsResult.ok) {
+    return {
+      ok: false,
+      error: sessionsResult.stderr || sessionsResult.error || "Could not read OpenClaw sessions.",
+      sessions: [],
+      events: [],
+    };
+  }
+  const sessionsJson = parseJson(sessionsResult.stdout, { sessions: [] });
+  const sessions = workflowSessionCandidates(workflow, sessionsJson);
+  const collected = await Promise.all(sessions.map(async (session) => {
+    const transcript = await readJsonlTail(sessionArtifactPath(session, ".jsonl"), 180);
+    const trajectory = await readJsonlTail(sessionArtifactPath(session, ".trajectory.jsonl"), 180);
+    return {
+      session,
+      events: [
+        ...parseTranscriptEvents(transcript, session),
+        ...parseTrajectoryEvents(trajectory, session),
+      ],
+    };
+  }));
+  const events = dedupeEvents(collected.flatMap((item) => item.events))
+    .sort((a, b) => eventMs(a) - eventMs(b))
+    .slice(-160);
+  return {
+    ok: true,
+    error: "",
+    sessions: sessions.map((session) => ({
+      key: session.key || "",
+      kind: session.kind || "",
+      sessionId: session.sessionId || "",
+      updatedAt: session.updatedAt || null,
+    })),
+    events,
+  };
+}
+
+function formatDateTime(value) {
+  const numeric = Number(value);
+  const ms = Number.isFinite(numeric) && numeric > 1000000000000 ? numeric : Date.parse(value || "");
+  if (!Number.isFinite(ms)) return "unknown time";
+  return new Date(ms).toISOString();
+}
+
+function formatWorkflowEvent(event) {
+  const parts = [
+    `[${formatDateTime(event.at)}]`,
+    event.type || "event",
+    event.status ? `(${event.status})` : "",
+    event.stepName ? workflowStepLabel({ index: event.stepIndex ?? 0, name: event.stepName }) : "",
+  ].filter(Boolean);
+  const lines = [`${parts.join(" ")} - ${event.title || event.type || "event"}`];
+  if (event.detail) lines.push(`  ${event.detail}`);
+  if (event.command && event.status === "failed") lines.push(`  command: ${compactText(event.command, 700)}`);
+  if (event.result) lines.push(`  result: ${event.result}`);
+  return lines.join("\n");
+}
+
+function formatOpenClawEvent(event) {
+  const duration = Number.isFinite(Number(event.durationMs)) ? ` ${Math.round(Number(event.durationMs))}ms` : "";
+  const lines = [
+    `[${formatDateTime(event.at)}] ${event.type || "openclaw"} (${event.status || "unknown"}${duration}) - ${event.title || "OpenClaw event"}`,
+  ];
+  if (event.detail) lines.push(`  ${event.detail}`);
+  if (event.sessionKey) lines.push(`  session: ${event.sessionKey}`);
+  return lines.join("\n");
+}
+
+async function buildWorkflowLog(workflow) {
+  const openclaw = await collectWorkflowOpenClawEvents(workflow);
+  const events = Array.isArray(workflow.events) ? workflow.events : [];
+  const legacyHistory = Array.isArray(workflow.history) ? workflow.history.map((item) => ({
+    at: item.at,
+    type: "legacy.history",
+    status: item.status || "",
+    stepIndex: item.stepIndex ?? null,
+    title: item.status || "history",
+    detail: item.summary || "",
+  })) : [];
+  return {
+    ok: true,
+    generatedAt: new Date().toISOString(),
+    workflow: {
+      id: workflow.id,
+      name: workflow.name || "",
+      jobId: workflow.jobId || "",
+      status: workflow.status || "",
+      currentIndex: workflow.currentIndex ?? 0,
+      currentStep: activeWorkflowStep(workflow),
+      logUrl: workflowLogUrl(workflow),
+    },
+    controllerEvents: [...events, ...legacyHistory].sort((a, b) => eventMs(a) - eventMs(b)),
+    openclaw,
+  };
+}
+
+function workflowLogText(log) {
+  const workflow = log.workflow || {};
+  const currentStep = workflow.currentStep || null;
+  const lines = [
+    "OpenClaw Automator workflow event log",
+    "",
+    `Generated: ${log.generatedAt}`,
+    `Workflow: ${workflow.name || "Unnamed workflow"}`,
+    `Workflow ID: ${workflow.id || ""}`,
+    `Cron job ID: ${workflow.jobId || ""}`,
+    `Status: ${workflow.status || "unknown"}`,
+    currentStep ? `Current active row: ${workflowStepLabel(currentStep)}` : "Current active row: unknown",
+    "",
+    "Use: read this only when the active cron prompt lacks enough history. Future step rows are intentionally not included.",
+    "Note: successful controller command lines are omitted here for readability; the JSON endpoint keeps raw details.",
+    "",
+    "Controller events",
+    "-----------------",
+  ];
+  if (log.controllerEvents?.length) {
+    lines.push(...log.controllerEvents.map(formatWorkflowEvent));
+  } else {
+    lines.push("No controller events recorded yet.");
+  }
+  lines.push("", "Observed OpenClaw events", "------------------------");
+  if (!log.openclaw?.ok) {
+    lines.push(`Could not collect OpenClaw events: ${log.openclaw?.error || "unknown error"}`);
+  } else if (log.openclaw.events?.length) {
+    lines.push(...log.openclaw.events.map(formatOpenClawEvent));
+  } else {
+    lines.push("No matching OpenClaw transcript or trajectory events found yet.");
+  }
+  if (log.openclaw?.sessions?.length) {
+    lines.push("", "Matched sessions", "----------------");
+    for (const session of log.openclaw.sessions) {
+      lines.push(`- ${session.key || session.sessionId || "session"} (${session.kind || "unknown"})`);
+    }
+  }
+  lines.push("");
+  return lines.join("\n");
 }
 
 function ageLabel(updatedAt) {
@@ -395,12 +777,28 @@ function buildPresets(settings) {
 async function collectBootstrap() {
   const settings = await readSettings();
   const [sessionsResult, cronResult, gatewayResult] = await Promise.all([
-    execOpenClaw(["sessions", "--all-agents", "--json", "--limit", "all"], { timeoutMs: 20000 }),
-    execOpenClaw(["cron", "list", "--all", "--json"], { timeoutMs: 15000 }),
+    execOpenClaw(["sessions", "--all-agents", "--json", "--limit", "all"], { timeoutMs: 20000, stdoutMax: 2 * 1024 * 1024 }),
+    execOpenClaw(["cron", "list", "--all", "--json"], { timeoutMs: 15000, stdoutMax: 5 * 1024 * 1024 }),
     execOpenClaw(["gateway", "status"], { timeoutMs: 15000 }),
   ]);
   const sessionsJson = parseJson(sessionsResult.stdout, { sessions: [] });
   const cronJson = parseJson(cronResult.stdout, { jobs: [] });
+  const workflowsByJobId = await workflowMapByJobId();
+  const jobs = (cronJson.jobs || []).map((job) => {
+    const workflow = workflowsByJobId.get(job.id);
+    if (!workflow) return job;
+    return {
+      ...job,
+      workflow: {
+        id: workflow.id,
+        name: workflow.name || "",
+        status: workflow.status || "",
+        currentIndex: workflow.currentIndex ?? 0,
+        eventCount: Array.isArray(workflow.events) ? workflow.events.length : 0,
+        logUrl: workflowLogUrl(workflow),
+      },
+    };
+  });
   const sessions = sortSessions((sessionsJson.sessions || []).map(normalizeSession));
   const selected = settings.preferTelegramDirect
     ? sessions.find((session) => session.channel === "telegram" && session.scope === "direct") || sessions[0] || null
@@ -422,7 +820,7 @@ async function collectBootstrap() {
     settings,
     sessions,
     selectedSessionKey: selected?.key || "",
-    jobs: cronJson.jobs || [],
+    jobs,
     presets: buildPresets(settings),
     commands: {
       run: "openclaw agent --session-key <key> --message <text>",
@@ -570,9 +968,29 @@ async function createCronWorkflow(body, settings) {
     currentIndex: 0,
     name: optionalText(workflowBody.name || body.name || "OpenClaw workflow", 200),
     baseMessage: requireText(body.baseMessage || body.message, "Message"),
+    sessionKey: optionalText(body.sessionKey, 300),
+    sessionTarget: optionalText(body.sessionTarget, 80),
+    scheduleMode: optionalText(body.scheduleMode, 40),
+    schedule: {
+      mode: optionalText(body.scheduleMode, 40),
+      every: optionalText(body.every, 80),
+      cron: optionalText(body.cron, 120),
+      timezone: optionalText(body.timezone, 120),
+    },
+    delivery: {
+      mode: optionalText(body.deliveryMode, 40),
+      channel: optionalText(body.channel || body.replyChannel, 80),
+      to: optionalText(body.to || body.replyTo, 300),
+    },
     steps,
     history: [],
+    events: [],
   };
+  workflowEvent(workflow, "workflow.created", {
+    status: "creating",
+    title: "Workflow created",
+    detail: `${steps.length} step rows configured. Future rows are intentionally not included in cron prompts.`,
+  });
   await writeWorkflow(workflow);
 
   const requestedEnabled = body.enabled !== false && !body.disabled;
@@ -588,12 +1006,24 @@ async function createCronWorkflow(body, settings) {
   if (!addResult.ok || !jobId) {
     workflow.status = "create_failed";
     workflow.history.push({ at: new Date().toISOString(), status: "create_failed", summary: addResult.stderr || addResult.error || "cron add failed" });
+    workflowEvent(workflow, "cron.create_failed", {
+      status: "failed",
+      title: "Cron creation failed",
+      detail: addResult.stderr || addResult.error || "cron add failed",
+      command: displayCommand(addArgs),
+    });
     await writeWorkflow(workflow);
     return { ...addResult, workflow };
   }
 
   workflow.jobId = jobId;
   workflow.status = requestedEnabled ? "active" : "disabled";
+  workflowEvent(workflow, "cron.created", {
+    status: workflow.status,
+    title: "Cron job created",
+    detail: `OpenClaw cron job ${jobId} was created ${requestedEnabled ? "for activation" : "as disabled"}.`,
+    command: displayCommand(addArgs),
+  });
   await writeWorkflow(workflow);
 
   const editMessageArgs = ["cron", "edit", jobId, "--message", workflowStepMessage(workflow)];
@@ -601,6 +1031,21 @@ async function createCronWorkflow(body, settings) {
   const enableArgs = requestedEnabled ? ["cron", "edit", jobId, "--enable"] : null;
   const enableResult = enableArgs ? await execOpenClaw(enableArgs, { timeoutMs: 30000 }) : null;
   const ok = addResult.ok && editMessageResult.ok && (!enableResult || enableResult.ok);
+  workflowEvent(workflow, "cron.message_updated", {
+    status: editMessageResult.ok ? "done" : "failed",
+    title: "Cron prompt rewritten with real job id",
+    detail: editMessageResult.ok ? "The active-row prompt now contains the final cron job id and event-log URL." : editMessageResult.stderr || editMessageResult.error,
+    command: displayCommand(editMessageArgs),
+  });
+  if (enableResult) {
+    workflowEvent(workflow, "cron.enabled", {
+      status: enableResult.ok ? "active" : "failed",
+      title: enableResult.ok ? "Cron job enabled" : "Cron enable failed",
+      detail: enableResult.ok ? "The workflow controller job is active." : enableResult.stderr || enableResult.error,
+      command: displayCommand(enableArgs),
+    });
+  }
+  await writeWorkflow(workflow);
   await appendAudit({
     kind: "workflow-cron",
     ok,
@@ -650,15 +1095,30 @@ async function advanceWorkflow(id, body) {
   }
   const stepIndex = Number(body.stepIndex);
   if (!Number.isInteger(stepIndex) || stepIndex !== workflow.currentIndex) {
+    workflowEvent(workflow, "step.stale_report", {
+      status: "ignored",
+      stepIndex: Number.isInteger(stepIndex) ? stepIndex : null,
+      title: "Stale step report ignored",
+      detail: `Reported step ${body.stepIndex ?? "unknown"} did not match active step ${workflow.currentIndex}.`,
+    });
+    await writeWorkflow(workflow);
     return { ok: true, advanced: false, workflow, reason: "stale step report ignored" };
   }
   const status = String(body.status || "").toLowerCase();
   const summary = optionalText(body.summary, 1000);
+  const step = workflow.steps[stepIndex];
   workflow.history.push({
     at: new Date().toISOString(),
     stepIndex,
     status,
     summary,
+  });
+  workflowEvent(workflow, "step.reported", {
+    status: status || "unknown",
+    step,
+    stepIndex,
+    title: `Step reported ${status || "unknown"}`,
+    detail: summary || "The controller received a status report for the active step.",
   });
 
   if (["complete", "completed", "done", "success"].includes(status)) {
@@ -669,12 +1129,30 @@ async function advanceWorkflow(id, body) {
       workflow.status = "complete";
       const disableArgs = ["cron", "edit", workflow.jobId, "--disable", "--description", `${workflow.name} completed by workflow controller.`];
       const disableResult = await execOpenClaw(disableArgs, { timeoutMs: 30000 });
+      workflowEvent(workflow, "workflow.completed", {
+        status: disableResult.ok ? "complete" : "failed",
+        step,
+        stepIndex,
+        title: disableResult.ok ? "Workflow completed and cron disabled" : "Workflow completed but cron disable failed",
+        detail: disableResult.ok ? "All configured step rows are complete." : disableResult.stderr || disableResult.error,
+        command: displayCommand(disableArgs),
+      });
       await writeWorkflow(workflow);
       return { ok: disableResult.ok, advanced: true, complete: true, workflow, command: displayCommand(disableArgs), result: disableResult };
     }
     workflow.status = "active";
     const editArgs = ["cron", "edit", workflow.jobId, "--message", workflowStepMessage(workflow)];
     const editResult = await execOpenClaw(editArgs, { timeoutMs: 30000 });
+    workflowEvent(workflow, "step.advanced", {
+      status: editResult.ok ? "active" : "failed",
+      step,
+      stepIndex,
+      title: editResult.ok ? "Advanced to next active row" : "Advance prompt rewrite failed",
+      detail: editResult.ok
+        ? `Completed ${workflowStepLabel(step)}. Cron prompt now points at ${workflowStepLabel(activeWorkflowStep(workflow))}.`
+        : editResult.stderr || editResult.error,
+      command: displayCommand(editArgs),
+    });
     await writeWorkflow(workflow);
     return { ok: editResult.ok, advanced: true, complete: false, workflow, command: displayCommand(editArgs), result: editResult };
   }
@@ -683,12 +1161,36 @@ async function advanceWorkflow(id, body) {
     workflow.status = status === "blocked" ? "blocked" : "failed";
     workflow.steps[stepIndex].status = workflow.status;
     workflow.steps[stepIndex].lastSummary = summary;
+    workflowEvent(workflow, "step.held", {
+      status: workflow.status,
+      step,
+      stepIndex,
+      title: `Active row held as ${workflow.status}`,
+      detail: summary || "The active row was not advanced.",
+    });
     await writeWorkflow(workflow);
     return { ok: true, advanced: false, workflow, reason: `step marked ${workflow.status}; active step unchanged` };
   }
 
+  workflowEvent(workflow, "step.unknown_status", {
+    status: "ignored",
+    step,
+    stepIndex,
+    title: "Unknown step status ignored",
+    detail: `Status '${status || "empty"}' did not advance the workflow.`,
+  });
   await writeWorkflow(workflow);
   return { ok: true, advanced: false, workflow, reason: "unknown status; active step unchanged" };
+}
+
+async function serveWorkflowLog(res, pathname) {
+  const id = decodeURIComponent(pathname.split("/")[2] || "");
+  const workflow = await readWorkflow(id);
+  if (!workflow) {
+    textResponse(res, 404, "Workflow not found.");
+    return;
+  }
+  textResponse(res, 200, workflowLogText(await buildWorkflowLog(workflow)));
 }
 
 async function handleApi(req, res, pathname) {
@@ -702,6 +1204,16 @@ async function handleApi(req, res, pathname) {
   }
   if (req.method === "GET" && pathname === "/api/settings") {
     jsonResponse(res, 200, { ok: true, settings: await readSettings() });
+    return;
+  }
+  if (req.method === "GET" && pathname.startsWith("/api/workflows/") && pathname.endsWith("/events")) {
+    const id = decodeURIComponent(pathname.split("/")[3] || "");
+    const workflow = await readWorkflow(id);
+    if (!workflow) {
+      errorResponse(res, 404, "Workflow not found.");
+      return;
+    }
+    jsonResponse(res, 200, await buildWorkflowLog(workflow));
     return;
   }
   if (req.method === "POST" && pathname === "/api/settings") {
@@ -776,6 +1288,10 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url || "/", `http://${req.headers.host || `127.0.0.1:${port}`}`);
     if (url.pathname.startsWith("/api/")) {
       await handleApi(req, res, url.pathname);
+      return;
+    }
+    if (req.method === "GET" && url.pathname.startsWith("/workflows/") && url.pathname.endsWith("/events.txt")) {
+      await serveWorkflowLog(res, url.pathname);
       return;
     }
     await serveStatic(req, res, url.pathname);
