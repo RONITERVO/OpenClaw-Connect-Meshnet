@@ -4,7 +4,7 @@ import { appendFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/p
 import { existsSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 import { homedir } from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -22,7 +22,7 @@ const openclawWorkspaceSkillsDir = join(homedir(), ".openclaw", "workspace", "sk
 const defaultGatewayHttp = process.env.OPENCLAW_AUTOMATOR_GATEWAY_HTTP || "http://127.0.0.1:18789";
 const openclawCommand = process.env.OPENCLAW_BIN || (process.platform === "win32" ? "openclaw.cmd" : "openclaw");
 const openclawMjs = process.env.APPDATA ? join(process.env.APPDATA, "npm", "node_modules", "openclaw", "openclaw.mjs") : "";
-const appVersion = "0.4.18";
+const appVersion = "0.4.19";
 const workflowIntakeApprovalTtlMs = 30 * 60 * 1000;
 
 const contentTypes = new Map([
@@ -123,14 +123,14 @@ Prefer ordinary OpenClaw cron for a simple one-shot reminder or a simple repeate
 2. Build a structured draft from the user's short request.
 3. POST it to ${base}/api/agent-tools/workflow-intake/preview.
 4. If the response asks questions, ask the user those questions in the same chat.
-5. If the response says confirmation is needed, summarize the exact schedule, delivery route, and step rows. Ask the user to reply with the returned approval phrase exactly.
-6. After that later user reply exists in the same OpenClaw session, POST the unchanged draft to ${base}/api/agent-tools/workflow-intake/create with userConfirmed:true, approvalId, and approvalCode.
+5. If the response says confirmation is needed, summarize the exact schedule, delivery route, step rows, and activation plan. Ask the user to reply with the returned approval phrase exactly.
+6. After that later user reply exists in the same OpenClaw session, POST response.createRequestTemplate to ${base}/api/agent-tools/workflow-intake/create, preserving the activation fields and adding userConfirmed:true, approvalId, and approvalCode if they are not already present.
 
 The backend rejects create if the user did not confirm in the selected chat after preview, if the draft changed, or if the approval expired.
 
 ## Defaults
 
-- Keep created jobs disabled unless the user explicitly asks to enable/start them.
+- Keep created jobs disabled unless the user explicitly asks to enable/start them. When activation was requested, include enabled:true and allowEnable:true in preview and create; the returned activation plan will say whether create will enable the job.
 - Use isolated cron sessions for repeating workflows unless the user explicitly wants the main chat context to grow.
 - Keep the cron prompt focused on the active step. Automator stores future rows and exposes a focused event log.
 - Do not ask the user for session ids, endpoint URLs, or command flags when the current session already provides them.
@@ -579,6 +579,36 @@ function publicWorkflowIntakeApproval(approval) {
   };
 }
 
+function workflowIntakeCreateRequestTemplate(draft, approval = null) {
+  const request = {
+    hint: draft.intakeHint,
+    sessionKey: draft.sessionKey,
+    name: draft.name,
+    baseMessage: draft.baseMessage,
+    scheduleMode: draft.scheduleMode,
+    every: draft.scheduleMode === "every" ? draft.every : "",
+    cron: draft.scheduleMode === "cron" ? draft.cron : "",
+    timezone: draft.timezone,
+    deliveryMode: draft.deliveryMode,
+    replyChannel: draft.replyChannel,
+    replyTo: draft.replyTo,
+    webhook: draft.webhook,
+    enabled: draft.enabled,
+    disabled: draft.disabled,
+    allowEnable: draft.enabled === true,
+    userConfirmed: true,
+    approvalId: approval?.id || "<approval.id>",
+    approvalCode: approval?.code || "<approval.code>",
+    steps: draft.workflow.steps.map((step) => ({
+      name: step.name,
+      action: step.action,
+      done: step.done,
+      note: step.note,
+    })),
+  };
+  return Object.fromEntries(Object.entries(request).filter(([, value]) => value !== ""));
+}
+
 async function readWorkflowIntakeApprovals() {
   await ensureStateDir();
   try {
@@ -780,7 +810,7 @@ function buildWorkflowIntake(body, settings) {
   const confirmed = body.userConfirmed === true || body.confirm === true;
   const wantsEnabled = body.enabled === true || body.disabled === false || body.enableAfterCreate === true;
   const allowEnable = body.allowEnable === true || body.activate === true;
-  const enabled = Boolean(confirmed && allowEnable && wantsEnabled);
+  const enabled = Boolean(allowEnable && wantsEnabled);
   const missing = [];
   const warnings = [];
 
@@ -807,7 +837,11 @@ function buildWorkflowIntake(body, settings) {
   if (deliveryMode === "webhook" && !webhook) missing.push(workflowIntakeMissingItem("webhook", "Webhook delivery needs a URL."));
 
   if (steps.length === 1) warnings.push("Only one step row is configured. This is valid, but a normal OpenClaw cron may be simpler if the workflow does not need controlled advancement.");
-  if (wantsEnabled && (!confirmed || !allowEnable)) warnings.push("Activation was requested but will not happen unless the user has confirmed and allowEnable is true.");
+  if (wantsEnabled && !allowEnable) {
+    warnings.push("Activation was requested but allowEnable was not true, so the workflow will be created disabled.");
+  } else if (wantsEnabled && !confirmed) {
+    warnings.push("Activation was requested and will happen only after the user confirms and create is called with the same activation fields.");
+  }
   if (deliveryMode === "quiet") warnings.push("Quiet delivery means the user must inspect Gateway/session history for results.");
   if (String(body.sessionTarget || "").toLowerCase() === "main") warnings.push("Main cron sessions can grow the selected chat context. Isolated is safer for repeating workflows.");
   if (body.lightContext === false) warnings.push("Full context was requested. Light context is the safer default for repeated workflow rows.");
@@ -859,6 +893,8 @@ function buildWorkflowIntake(body, settings) {
 
   const ready = missing.length === 0 && explicitQuestions.length === 0;
   let commandPreview = "";
+  let addCommandPreview = "";
+  let enableCommandPreview = "";
   let controllerMessagePreview = "";
   if (ready) {
     const previewWorkflow = {
@@ -870,7 +906,9 @@ function buildWorkflowIntake(body, settings) {
       steps,
     };
     controllerMessagePreview = workflowStepMessage(previewWorkflow);
-    commandPreview = displayCommand(cronArgs({ ...draft, enabled: false, disabled: true, message: controllerMessagePreview }, settings));
+    addCommandPreview = displayCommand(cronArgs({ ...draft, enabled: false, disabled: true, message: controllerMessagePreview }, settings));
+    enableCommandPreview = draft.enabled ? "openclaw cron edit <created-job-id> --enable" : "";
+    commandPreview = addCommandPreview;
   }
 
   const questions = explicitQuestions.length ? explicitQuestions : workflowIntakeQuestions(missing);
@@ -885,8 +923,20 @@ function buildWorkflowIntake(body, settings) {
     missing,
     questions,
     warnings,
+    activation: {
+      requested: wantsEnabled,
+      allowed: allowEnable,
+      confirmed,
+      willEnableAfterCreate: draft.enabled,
+      createsDisabledFirst: true,
+      note: draft.enabled
+        ? "Workflow creation writes the cron disabled first, rewrites the prompt with the real workflow/job id, then enables the job."
+        : "Workflow creation will leave the cron disabled unless the preview and create request both include enabled:true and allowEnable:true.",
+    },
     draft,
     commandPreview,
+    addCommandPreview,
+    enableCommandPreview,
     controllerMessagePreview,
   };
 }
@@ -907,7 +957,8 @@ function workflowIntakeSchema() {
     safety: [
       "Preview never creates a cron job.",
       "Preview returns an approval id/code and an exact phrase for the user to reply with in the selected chat.",
-      "Create requires userConfirmed: true, approvalId, approvalCode, an unchanged draft, and a later user-role chat message containing the approval phrase.",
+      "Preview returns createRequestTemplate so the agent can POST the same normalized request after the user confirms instead of reconstructing JSON from chat memory.",
+      "Create requires userConfirmed: true, approvalId, approvalCode, an unchanged previewed draft, and a later user-role chat message containing the approval phrase.",
       "Jobs created through this tool default to disabled.",
       "Activation requires enabled: true, userConfirmed: true, and allowEnable: true.",
       "The cron prompt receives only the active step plus a read-only past-event-log link.",
@@ -929,7 +980,14 @@ function workflowIntakeSchema() {
       approvalId: "Required on create. Use the id returned by preview.",
       approvalCode: "Required on create. Use the code returned by preview after the user replied with the approval phrase.",
       userConfirmed: "Required true on create after the user replies with the approval phrase in the selected chat.",
-      allowEnable: "Required true with enabled:true if the user explicitly asked to activate immediately.",
+      enabled: "Set true in both preview and create only when the user explicitly asks to activate immediately.",
+      allowEnable: "Required true with enabled:true in both preview and create if the user explicitly asked to activate immediately.",
+    },
+    response: {
+      activation: "Explains whether activation was requested, allowed, and will enable after create.",
+      addCommandPreview: "The initial cron add command. Workflow controllers intentionally create disabled first so the prompt can be rewritten with the real ids.",
+      enableCommandPreview: "The follow-up enable command shape when activation was requested and allowed.",
+      createRequestTemplate: "Exact request body to POST to create after the user replies with approval.phrase. Preserve its activation fields.",
     },
   };
 }
@@ -945,12 +1003,13 @@ function workflowIntakeDocs() {
     "1. Read this page once.",
     `2. POST a draft to ${base}/api/agent-tools/workflow-intake/preview.`,
     "3. If mode is needs_clarification, ask the returned questions in the same user chat.",
-    "4. If mode is needs_confirmation, summarize schedule, delivery, and steps, then ask the user to reply with approval.phrase exactly.",
-    `5. After that later user reply is visible in the same OpenClaw session, POST the same draft to ${base}/api/agent-tools/workflow-intake/create with userConfirmed:true, approvalId, and approvalCode. Only set enabled:true and allowEnable:true if the user explicitly asked for the job to run immediately.`,
+    "4. If mode is needs_confirmation, summarize schedule, delivery, steps, and activation, then ask the user to reply with approval.phrase exactly.",
+    `5. After that later user reply is visible in the same OpenClaw session, POST createRequestTemplate to ${base}/api/agent-tools/workflow-intake/create. Preserve enabled/disabled/allowEnable from the template; only fill userConfirmed:true, approvalId, and approvalCode if they are not already present.`,
     "",
     "Important:",
     "- Do not create a job from a vague hint without previewing and resolving missing fields.",
     "- Do not call create just because you have the approval code. The backend checks the selected chat transcript for a later user-role confirmation message.",
+    "- Do not reconstruct the create JSON from memory if preview returned createRequestTemplate. Use the template so approval hashing, delivery, schedule, and activation stay unchanged.",
     "- Keep future and previous rows out of the cron prompt. Automator stores them and rewrites the cron message when the active row advances.",
     "- If a step is blocked or fails, the controller keeps the same active row for the next run.",
     "- Use isolated cron sessions unless the user explicitly wants the main chat timeline to grow.",
@@ -1656,7 +1715,7 @@ async function createCronWorkflow(body, settings) {
   }
 
   workflow.jobId = jobId;
-  workflow.status = requestedEnabled ? "active" : "disabled";
+  workflow.status = requestedEnabled ? "activating" : "disabled";
   workflowEvent(workflow, "cron.created", {
     status: workflow.status,
     title: "Cron job created",
@@ -1670,6 +1729,7 @@ async function createCronWorkflow(body, settings) {
   const enableArgs = requestedEnabled ? ["cron", "edit", jobId, "--enable"] : null;
   const enableResult = enableArgs ? await execOpenClaw(enableArgs, { timeoutMs: 30000 }) : null;
   const ok = addResult.ok && editMessageResult.ok && (!enableResult || enableResult.ok);
+  workflow.status = requestedEnabled ? (enableResult?.ok ? "active" : "enable_failed") : "disabled";
   workflowEvent(workflow, "cron.message_updated", {
     status: editMessageResult.ok ? "done" : "failed",
     title: "Cron prompt rewritten with real job id",
@@ -1697,7 +1757,8 @@ async function createCronWorkflow(body, settings) {
     ok,
     workflow,
     controller: {
-      enabled: true,
+      enabled: requestedEnabled ? Boolean(enableResult?.ok) : false,
+      requestedEnabled,
       workflowId: workflow.id,
       jobId,
       addCommand: displayCommand(addArgs),
@@ -1856,6 +1917,7 @@ async function handleApi(req, res, pathname) {
       ...intake,
       approvalRequired: Boolean(approval),
       approval: publicWorkflowIntakeApproval(approval),
+      createRequestTemplate: approval ? workflowIntakeCreateRequestTemplate(intake.draft, approval) : null,
     });
     return;
   }
@@ -1875,6 +1937,7 @@ async function handleApi(req, res, pathname) {
         created: false,
         approvalRequired: true,
         approval: publicWorkflowIntakeApproval(approval.approval),
+        createRequestTemplate: approval.approval ? workflowIntakeCreateRequestTemplate(intake.draft, approval.approval) : null,
         approvalError: {
           reason: approval.reason,
           detail: approval.detail,
@@ -1902,6 +1965,7 @@ async function handleApi(req, res, pathname) {
         confirmedAt: approval.confirmation.confirmedAt,
         confirmationMessageId: approval.confirmation.messageId,
       },
+      createRequestTemplate: workflowIntakeCreateRequestTemplate(intake.draft, approval.approval),
       result,
     });
     return;
@@ -2048,12 +2112,26 @@ const server = createServer(async (req, res) => {
   }
 });
 
-await ensureStateDir();
-await installWorkflowIntakeSkill();
-if (!existsSync(settingsPath)) {
-  await writeSettings(defaultSettings);
+async function startServer() {
+  await ensureStateDir();
+  await installWorkflowIntakeSkill();
+  if (!existsSync(settingsPath)) {
+    await writeSettings(defaultSettings);
+  }
+
+  server.listen(port, "127.0.0.1", () => {
+    console.log(`OpenClaw Automator listening at http://127.0.0.1:${port}/`);
+  });
 }
 
-server.listen(port, "127.0.0.1", () => {
-  console.log(`OpenClaw Automator listening at http://127.0.0.1:${port}/`);
-});
+export {
+  buildWorkflowIntake,
+  workflowIntakeCreateRequestTemplate,
+  workflowIntakeDraftHash,
+  workflowIntakeDocs,
+  workflowIntakeSchema,
+};
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  await startServer();
+}

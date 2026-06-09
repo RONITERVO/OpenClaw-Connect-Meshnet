@@ -71,16 +71,17 @@ The tool is intentionally narrow:
 
 - preview has no cron side effects
 - preview returns an approval id/code and the exact phrase the user must reply with
+- preview returns `createRequestTemplate`; agents should post that template to create after approval instead of reconstructing the JSON from memory
 - create requires `userConfirmed: true`, `approvalId`, `approvalCode`, the same previewed draft, and a later user-role chat message containing the approval phrase
 - jobs default to disabled through this path
-- activation requires `enabled: true`, `allowEnable: true`, and explicit confirmation
+- activation requires `enabled: true`, `allowEnable: true`, and explicit confirmation in both preview and create; workflow controllers still create the cron disabled first, rewrite the prompt with real ids, then enable it
 - dashboard/webchat requests are downgraded to quiet delivery unless the user chooses a configured messaging channel such as Telegram
 - the saved cron prompt receives only the active step plus a read-only event-log URL
 
 Example instruction to paste to an OpenClaw agent:
 
 ```text
-Use the local Automator workflow intake tool at http://127.0.0.1:18890/agent-tools/workflow-intake. Convert my short request into a safe step-controller cron draft. If anything is unclear, ask me follow-up questions first. Before creating anything, summarize the exact schedule, delivery route, and step rows, then ask me to reply with the preview approval phrase.
+Use the local Automator workflow intake tool at http://127.0.0.1:18890/agent-tools/workflow-intake. Convert my short request into a safe step-controller cron draft. If anything is unclear, ask me follow-up questions first. Before creating anything, summarize the exact schedule, delivery route, step rows, and activation plan, then ask me to reply with the preview approval phrase. After I approve, post the returned createRequestTemplate to create and preserve its enabled/disabled/allowEnable fields.
 ```
 
 ## OpenClaw Tunnel
