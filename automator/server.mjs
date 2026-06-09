@@ -18,7 +18,7 @@ const auditPath = join(stateDir, "automation-log.jsonl");
 const defaultGatewayHttp = process.env.OPENCLAW_AUTOMATOR_GATEWAY_HTTP || "http://127.0.0.1:18789";
 const openclawCommand = process.env.OPENCLAW_BIN || (process.platform === "win32" ? "openclaw.cmd" : "openclaw");
 const openclawMjs = process.env.APPDATA ? join(process.env.APPDATA, "npm", "node_modules", "openclaw", "openclaw.mjs") : "";
-const appVersion = "0.4.10";
+const appVersion = "0.4.11";
 
 const contentTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -1324,7 +1324,7 @@ const server = createServer(async (req, res) => {
       await handleApi(req, res, url.pathname);
       return;
     }
-    if (req.method === "GET" && url.pathname.startsWith("/workflows/") && url.pathname.endsWith("/events.txt")) {
+    if (req.method === "GET" && url.pathname.startsWith("/workflows/") && (url.pathname.endsWith("/events.txt") || /^\/workflows\/[^/]+\/?$/.test(url.pathname))) {
       await serveWorkflowLog(res, url.pathname);
       return;
     }
