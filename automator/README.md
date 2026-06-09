@@ -76,3 +76,15 @@ http://127.0.0.1:18890/workflows/<workflow-id>/events.txt
 ```
 
 The agent does not write these log entries. Automator records controller events itself and passively reads matching OpenClaw session artifacts when the log is opened.
+
+## Agent Workflow Intake
+
+Agents should read:
+
+```text
+http://127.0.0.1:18890/agent-tools/workflow-intake
+```
+
+The preview response includes `activation`, `addCommandPreview`, `enableCommandPreview`, and `createRequestTemplate`.
+
+For fresh-context reliability, use `createRequestTemplate` for the create call after the user replies with `approval.phrase`. Preserve its schedule, delivery, step rows, and `enabled`/`disabled`/`allowEnable` fields. Workflow controllers intentionally create the cron job disabled first, rewrite the prompt with the real workflow/job ids, then run the enable command when activation was explicitly requested and approved.

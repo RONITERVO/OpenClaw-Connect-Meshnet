@@ -32,6 +32,8 @@ What it does:
 - shows an always-visible safety check when context, cron session, and reply destination do not line up
 - can use a spreadsheet-style step-plan controller that advances one repeating cron only after the agent reports the active step complete
 - keeps previous/future workflow rows out of cron prompts while exposing a focused read-only past-events log for the agent and user
+- exposes a local workflow-intake tool so an OpenClaw agent can turn a short Telegram/webchat hint into a previewed step-controller cron, ask follow-ups when needed, and create it only after Automator sees a later user approval reply in that chat
+- installs an OpenClaw-visible local skill on startup so fresh chat sessions can discover the workflow-intake contract without relying on previous conversation history
 - shows delayed contextual labels after a 5-second hover, with Simple and Detailed modes
 - links known OpenClaw flags inside Detailed labels to the relevant official docs pages
 - keeps an opened label visible while you move to its docs links, until you click `x`, click elsewhere, or press Escape
@@ -46,6 +48,40 @@ The package is written to:
 
 ```text
 dist\OpenClawAutomator-win.zip
+```
+
+### Agent workflow intake
+
+Automator includes a local, typed intake contract for OpenClaw agents:
+
+```text
+http://127.0.0.1:18890/agent-tools/workflow-intake
+```
+
+Use it when the user sends a short message like `weekday invoice followup` in Telegram or web chat and wants a controlled repeating workflow, not just a normal cron prompt. The agent reads the contract, posts a draft to the preview endpoint, asks the returned follow-up questions if required, summarizes the schedule/delivery/steps, then calls the create endpoint only after the user confirms.
+
+On startup, Automator installs this discoverability skill into OpenClaw's workspace skills directory, with a source copy kept under the main agent home:
+
+```text
+~\.openclaw\workspace\skills\openclaw-automator-workflow-intake\SKILL.md
+~\.openclaw\agents\main\agent\codex-home\skills\openclaw-automator-workflow-intake\SKILL.md
+```
+
+The tool is intentionally narrow:
+
+- preview has no cron side effects
+- preview returns an approval id/code and the exact phrase the user must reply with
+- preview returns `createRequestTemplate`; agents should post that template to create after approval instead of reconstructing the JSON from memory
+- create requires `userConfirmed: true`, `approvalId`, `approvalCode`, the same previewed draft, and a later user-role chat message containing the approval phrase
+- jobs default to disabled through this path
+- activation requires `enabled: true`, `allowEnable: true`, and explicit confirmation in both preview and create; workflow controllers still create the cron disabled first, rewrite the prompt with real ids, then enable it
+- dashboard/webchat requests are downgraded to quiet delivery unless the user chooses a configured messaging channel such as Telegram
+- the saved cron prompt receives only the active step plus a read-only event-log URL
+
+Example instruction to paste to an OpenClaw agent:
+
+```text
+Use the local Automator workflow intake tool at http://127.0.0.1:18890/agent-tools/workflow-intake. Convert my short request into a safe step-controller cron draft. If anything is unclear, ask me follow-up questions first. Before creating anything, summarize the exact schedule, delivery route, step rows, and activation plan, then ask me to reply with the preview approval phrase. After I approve, post the returned createRequestTemplate to create and preserve its enabled/disabled/allowEnable fields.
 ```
 
 ## OpenClaw Tunnel

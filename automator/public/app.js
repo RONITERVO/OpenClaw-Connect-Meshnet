@@ -18,6 +18,7 @@ const els = {
   helpSimpleBtn: $("helpSimpleBtn"),
   helpDetailedBtn: $("helpDetailedBtn"),
   cronLink: $("cronLink"),
+  intakeLink: $("intakeLink"),
   helpBubble: $("helpBubble"),
   helpCloseBtn: $("helpCloseBtn"),
   helpBubbleTitle: $("helpBubbleTitle"),
@@ -130,6 +131,11 @@ const helpCatalog = {
     title: "Open Cron",
     simple: "Open OpenClaw's full cron page.",
     detailed: "Opens the Gateway cron screen at /cron. Use it when you want OpenClaw's native editor; this app keeps the common cron flow simpler and avoids manual session id entry.",
+  },
+  agentIntake: {
+    title: "Agent tool",
+    simple: "Open instructions that an agent can use to build a safe step workflow for you.",
+    detailed: "Opens Automator's local workflow-intake contract. An OpenClaw agent can read this page, POST a preview, ask follow-up questions, and create only after Automator sees a later user approval reply in the selected OpenClaw chat.",
   },
   modeNow: {
     title: "Tell agent",
@@ -1460,6 +1466,7 @@ async function load() {
   state.jobs = bootstrap.jobs || [];
   els.gatewayLink.href = bootstrap.app?.gatewayHttp || "http://127.0.0.1:18789/";
   els.cronLink.href = `${(bootstrap.app?.gatewayHttp || "http://127.0.0.1:18789/").replace(/\/$/, "")}/cron`;
+  els.intakeLink.href = `http://127.0.0.1:${bootstrap.app?.port || 18890}/agent-tools/workflow-intake`;
   els.timezoneInput.value = bootstrap.settings?.defaultTimezone || els.timezoneInput.value;
   els.thinkingInput.value = bootstrap.settings?.defaultThinking || "xhigh";
   els.timeoutInput.value = bootstrap.settings?.defaultTimeoutSeconds || 600;
