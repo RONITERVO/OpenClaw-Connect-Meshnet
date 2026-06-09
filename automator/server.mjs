@@ -16,7 +16,7 @@ const auditPath = join(stateDir, "automation-log.jsonl");
 const defaultGatewayHttp = process.env.OPENCLAW_AUTOMATOR_GATEWAY_HTTP || "http://127.0.0.1:18789";
 const openclawCommand = process.env.OPENCLAW_BIN || (process.platform === "win32" ? "openclaw.cmd" : "openclaw");
 const openclawMjs = process.env.APPDATA ? join(process.env.APPDATA, "npm", "node_modules", "openclaw", "openclaw.mjs") : "";
-const appVersion = "0.4.0";
+const appVersion = "0.4.1";
 
 const contentTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -312,7 +312,7 @@ async function collectBootstrap() {
   const settings = await readSettings();
   const [sessionsResult, cronResult, gatewayResult] = await Promise.all([
     execOpenClaw(["sessions", "--all-agents", "--json", "--limit", "all"], { timeoutMs: 20000 }),
-    execOpenClaw(["cron", "list", "--json"], { timeoutMs: 15000 }),
+    execOpenClaw(["cron", "list", "--all", "--json"], { timeoutMs: 15000 }),
     execOpenClaw(["gateway", "status"], { timeoutMs: 15000 }),
   ]);
   const sessionsJson = parseJson(sessionsResult.stdout, { sessions: [] });
@@ -352,6 +352,10 @@ function agentArgs(body, settings) {
   const sessionKey = requireText(body.sessionKey, "Session key", 300);
   const message = requireText(body.message, "Message");
   const args = ["agent", "--session-key", sessionKey, "--message", message, "--json"];
+  const agent = optionalText(body.agent, 120);
+  if (agent) args.push("--agent", agent);
+  const model = optionalText(body.model, 200);
+  if (model) args.push("--model", model);
   const thinking = normalizeThinking(body.thinking, settings.defaultThinking);
   if (thinking) args.push("--thinking", thinking);
   const timeout = Number(body.timeoutSeconds || settings.defaultTimeoutSeconds);
@@ -376,16 +380,24 @@ function cronArgs(body, settings) {
   const requestedSessionTarget = optionalText(body.sessionTarget, 80);
   const sessionTarget = requestedSessionTarget || (jobMode === "system-event" ? "main" : "isolated");
   const args = ["cron", "add", "--name", name, "--session-key", sessionKey, "--session", sessionTarget, "--json"];
+  const description = optionalText(body.description, 1000);
+  if (description) args.push("--description", description);
+  const agent = optionalText(body.agent, 120);
+  if (agent) args.push("--agent", agent);
+  if (body.enabled === false || body.disabled) args.push("--disabled");
 
   if (mode === "cron") {
     args.push("--cron", requireText(body.cron, "Cron expression", 80));
     const tz = optionalText(body.timezone || settings.defaultTimezone, 120);
     if (tz) args.push("--tz", tz);
+    if (body.exactTiming) args.push("--exact");
+    const stagger = optionalText(body.stagger, 40);
+    if (stagger) args.push("--stagger", stagger);
   } else if (mode === "at") {
     args.push("--at", requireText(body.at, "Run time", 120));
     const tz = optionalText(body.timezone || settings.defaultTimezone, 120);
     if (tz) args.push("--tz", tz);
-    if (body.deleteAfterRun !== false) args.push("--delete-after-run");
+    args.push(body.deleteAfterRun === false ? "--keep-after-run" : "--delete-after-run");
   } else {
     args.push("--every", requireText(body.every || "1h", "Interval", 40));
   }
@@ -394,6 +406,8 @@ function cronArgs(body, settings) {
     args.push("--system-event", requireText(body.message, "System event"));
   } else {
     args.push("--message", requireText(body.message, "Message"));
+    const model = optionalText(body.model, 200);
+    if (model) args.push("--model", model);
     const thinking = normalizeThinking(body.thinking, settings.defaultThinking);
     if (thinking) args.push("--thinking", thinking);
   }
@@ -402,6 +416,7 @@ function cronArgs(body, settings) {
   if (jobMode !== "system-event" && body.expectFinal !== false) args.push("--expect-final");
   if (jobMode !== "system-event") {
     if (deliveryMode === "notify") args.push("--announce");
+    else if (deliveryMode === "webhook") args.push("--webhook", requireText(body.webhook, "Webhook URL", 1000));
     else args.push("--no-deliver");
   }
   if (jobMode !== "system-event" && body.lightContext) args.push("--light-context");
@@ -414,11 +429,13 @@ function cronArgs(body, settings) {
   if (wantsDelivery && to) args.push("--to", to);
   const account = optionalText(body.account || body.replyAccount, 120);
   if (wantsDelivery && account) args.push("--account", account);
+  if (jobMode !== "system-event" && (deliveryMode === "notify" || deliveryMode === "webhook") && body.bestEffortDelivery) {
+    args.push("--best-effort-deliver");
+  }
   const tools = Array.isArray(body.tools) ? body.tools.join(",") : optionalText(body.tools, 500);
   if (tools) args.push("--tools", tools);
   const wake = optionalText(body.wake, 40);
   if (wake) args.push("--wake", wake);
-  if (body.disabled) args.push("--disabled");
   return args;
 }
 

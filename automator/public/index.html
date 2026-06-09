@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OpenClaw Automator</title>
-  <link rel="stylesheet" href="./styles.css?v=0.4.0">
+  <link rel="stylesheet" href="./styles.css?v=0.4.1">
 </head>
 <body>
   <main class="shell">
@@ -106,10 +106,14 @@
               <h3>Answer</h3>
               <span id="deliverySummary">Message me</span>
             </div>
-            <div class="choice-grid two">
+            <div class="choice-grid">
               <button class="choice-card active" type="button" data-delivery-mode="notify" data-help-key="deliveryPreset">
                 <strong>Message me</strong>
                 <span>Send the final answer back to the selected chat</span>
+              </button>
+              <button class="choice-card" type="button" data-delivery-mode="webhook" data-help-key="deliveryPreset">
+                <strong>Webhook</strong>
+                <span>POST the finished payload to a URL</span>
               </button>
               <button class="choice-card" type="button" data-delivery-mode="quiet" data-help-key="deliveryPreset">
                 <strong>Quiet run</strong>
@@ -151,6 +155,10 @@
             </label>
           </div>
           <div class="delivery-row advanced-delivery">
+            <label class="toggle" data-help-key="enabled">
+              <input id="enabledToggle" type="checkbox" checked>
+              <span>Enabled</span>
+            </label>
             <label class="toggle" data-help-key="deliver">
               <input id="deliverToggle" type="checkbox" checked>
               <span>Send answer back</span>
@@ -163,8 +171,28 @@
               <input id="lightContextToggle" type="checkbox">
               <span>Light context</span>
             </label>
+            <label class="toggle schedule-control" data-schedule="at" data-help-key="deleteAfterRun">
+              <input id="deleteAfterRunToggle" type="checkbox" checked>
+              <span>Delete after run</span>
+            </label>
+            <label class="toggle schedule-control" data-schedule="cron" data-help-key="exactTiming">
+              <input id="exactTimingToggle" type="checkbox">
+              <span>Exact cron time</span>
+            </label>
+            <label class="toggle" data-help-key="bestEffortDelivery">
+              <input id="bestEffortDeliveryToggle" type="checkbox">
+              <span>Best-effort delivery</span>
+            </label>
           </div>
           <div class="advanced-grid">
+            <label class="field" data-help-key="jobName">
+              <span>Job name</span>
+              <input id="jobNameInput" type="text" placeholder="Auto from selected chat">
+            </label>
+            <label class="field" data-help-key="description">
+              <span>Description</span>
+              <input id="descriptionInput" type="text" placeholder="Optional context for this job">
+            </label>
             <label class="field" data-help-key="sessionKey">
               <span>Session key override</span>
               <input id="sessionKeyInput" type="text">
@@ -173,7 +201,6 @@
               <span>Cron session</span>
               <select id="sessionTargetInput">
                 <option value="isolated">isolated</option>
-                <option value="current">current</option>
                 <option value="main">main</option>
               </select>
             </label>
@@ -184,6 +211,18 @@
             <label class="field" data-help-key="replyTo">
               <span>Reply to</span>
               <input id="replyToInput" type="text">
+            </label>
+            <label class="field delivery-control" data-delivery="webhook" data-help-key="webhook">
+              <span>Webhook URL</span>
+              <input id="webhookInput" type="url" placeholder="https://example.com/openclaw">
+            </label>
+            <label class="field" data-help-key="agent">
+              <span>Agent ID</span>
+              <input id="agentInput" type="text" placeholder="main or ops">
+            </label>
+            <label class="field" data-help-key="model">
+              <span>Model override</span>
+              <input id="modelInput" type="text" placeholder="openai/gpt-5.5">
             </label>
             <label class="field" data-help-key="thinking">
               <span>Thinking</span>
@@ -203,6 +242,10 @@
             <label class="field" data-help-key="tools">
               <span>Tools</span>
               <input id="toolsInput" type="text" placeholder="exec,read,write">
+            </label>
+            <label class="field schedule-control" data-schedule="cron" data-help-key="stagger">
+              <span>Stagger</span>
+              <input id="staggerInput" type="text" placeholder="30s or 5m">
             </label>
             <label class="field" data-help-key="wake">
               <span>Wake</span>
@@ -257,6 +300,6 @@
     </div>
     <div id="helpBubbleText" class="help-text"></div>
   </div>
-  <script src="./app.js?v=0.4.0" type="module"></script>
+  <script src="./app.js?v=0.4.1" type="module"></script>
 </body>
 </html>

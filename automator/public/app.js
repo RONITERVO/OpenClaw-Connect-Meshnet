@@ -39,14 +39,24 @@ const els = {
   cronInput: $("cronInput"),
   timezoneInput: $("timezoneInput"),
   deliverToggle: $("deliverToggle"),
+  enabledToggle: $("enabledToggle"),
   expectFinalToggle: $("expectFinalToggle"),
   lightContextToggle: $("lightContextToggle"),
+  deleteAfterRunToggle: $("deleteAfterRunToggle"),
+  exactTimingToggle: $("exactTimingToggle"),
+  bestEffortDeliveryToggle: $("bestEffortDeliveryToggle"),
+  jobNameInput: $("jobNameInput"),
+  descriptionInput: $("descriptionInput"),
   sessionKeyInput: $("sessionKeyInput"),
   replyChannelInput: $("replyChannelInput"),
   replyToInput: $("replyToInput"),
+  webhookInput: $("webhookInput"),
+  agentInput: $("agentInput"),
+  modelInput: $("modelInput"),
   thinkingInput: $("thinkingInput"),
   timeoutInput: $("timeoutInput"),
   toolsInput: $("toolsInput"),
+  staggerInput: $("staggerInput"),
   wakeInput: $("wakeInput"),
   jobModeInput: $("jobModeInput"),
   sessionTargetInput: $("sessionTargetInput"),
@@ -73,6 +83,10 @@ const deliveryPresets = {
   notify: {
     label: "Message me",
     summary: "Answer returns to selected chat",
+  },
+  webhook: {
+    label: "Webhook",
+    summary: "POST result to URL",
   },
   quiet: {
     label: "Quiet run",
@@ -124,7 +138,7 @@ const helpCatalog = {
   modeAdvanced: {
     title: "Fine tune",
     simple: "Show the extra controls.",
-    detailed: "Opens the full command surface: schedule fields, session key override, reply routing, cron session target, model thinking, timeout, tool allow-list, wake mode, and system-event mode. It also switches help labels to Detailed.",
+    detailed: "Opens the full command surface: schedule fields, job name, enabled state, session key override, reply routing, cron session target, agent/model override, timeout, tool allow-list, wake mode, delivery mode, stagger, and system-event mode. It also switches help labels to Detailed.",
   },
   sessionSearch: {
     title: "Find chat",
@@ -201,15 +215,20 @@ const helpCatalog = {
     simple: "Let the answer come back to Telegram.",
     detailed: "For immediate runs, adds --deliver plus reply-channel and reply-to. For scheduled jobs, Message me adds --announce and delivery target flags; Quiet run adds --no-deliver.",
   },
+  enabled: {
+    title: "Enabled",
+    simple: "Let the saved job run.",
+    detailed: "When off, cron creation adds --disabled. Disabled jobs are saved and visible in the Gateway cron page but will not run until enabled.",
+  },
   deliveryPresets: {
     title: "Answer",
     simple: "Choose whether the result should message you.",
-    detailed: "Message me sends the final answer back to the selected chat. Quiet run explicitly uses --no-deliver for cron so isolated jobs do not fall back to announcing unexpectedly.",
+    detailed: "Message me sends the final answer back to the selected chat. Webhook adds --webhook for scheduled jobs. Quiet run explicitly uses --no-deliver so isolated jobs do not fall back to announcing unexpectedly.",
   },
   deliveryPreset: {
     title: "Answer choice",
     simple: "Choose how visible the result should be.",
-    detailed: "Message me maps to --deliver for Ask now and --announce for cron. Quiet run leaves immediate runs local and adds --no-deliver for cron jobs.",
+    detailed: "Message me maps to --deliver for Ask now and --announce for cron. Webhook maps to --webhook for cron jobs. Quiet run leaves immediate runs local and adds --no-deliver for cron jobs.",
   },
   expectFinal: {
     title: "Wait for answer",
@@ -221,10 +240,25 @@ const helpCatalog = {
     simple: "Start with less extra memory.",
     detailed: "Adds --light-context to cron jobs. Use it for small reminders when you do not want a heavy context bootstrap.",
   },
+  deleteAfterRun: {
+    title: "Delete after run",
+    simple: "Clean up one-time reminders after they finish.",
+    detailed: "For --at jobs, checked adds --delete-after-run. Unchecked adds --keep-after-run so the one-shot job stays visible after it succeeds.",
+  },
+  exactTiming: {
+    title: "Exact cron time",
+    simple: "Do not spread this cron job out.",
+    detailed: "Adds --exact for cron-expression jobs, disabling the default stagger window.",
+  },
+  bestEffortDelivery: {
+    title: "Best-effort delivery",
+    simple: "Do not fail the whole job if sending the result fails.",
+    detailed: "Adds --best-effort-deliver when delivery is Message me or Webhook. Useful when the task matters more than the final notification.",
+  },
   advancedSummary: {
     title: "Advanced settings",
     simple: "Extra controls live here.",
-    detailed: "These fields map directly to OpenClaw CLI flags. They are for users who want to verify routing, delivery, model effort, timeout, tool access, and wake behavior before execution.",
+    detailed: "These fields map directly to OpenClaw CLI flags. They are for users who want to verify routing, delivery, model, timeout, tool access, wake behavior, and saved-job behavior before execution.",
   },
   advancedSchedule: {
     title: "Advanced schedule",
@@ -236,10 +270,20 @@ const helpCatalog = {
     simple: "Usually leave this alone.",
     detailed: "Used as --session-key. The normal path fills it by selecting a chat card, so you should not need to type ids manually. Override only when routing to a session not shown in the list.",
   },
+  jobName: {
+    title: "Job name",
+    simple: "A readable name for the saved schedule.",
+    detailed: "Passed as --name for cron jobs. Leave empty to generate a name from the selected chat.",
+  },
+  description: {
+    title: "Description",
+    simple: "Optional note for the saved job.",
+    detailed: "Passed as --description for cron jobs. This is metadata for you and the Gateway cron page, not the prompt the agent reads.",
+  },
   sessionTarget: {
     title: "Cron session",
     simple: "Where scheduled agent work runs.",
-    detailed: "Passed as cron --session. isolated is the safe default for agent-turn cron jobs. current reuses the current cron session. main is only valid for system-event jobs.",
+    detailed: "Passed as cron --session. isolated runs a dedicated agent turn. main posts to the main timeline and is the natural target for system-event jobs.",
   },
   replyChannel: {
     title: "Reply channel",
@@ -250,6 +294,21 @@ const helpCatalog = {
     title: "Reply to",
     simple: "Who receives the answer.",
     detailed: "Used as --reply-to for immediate runs and --to for scheduled delivery. For Telegram direct chats this is the Telegram chat/user id.",
+  },
+  webhook: {
+    title: "Webhook URL",
+    simple: "Where webhook results should be sent.",
+    detailed: "Required when Answer is Webhook. Scheduled jobs add --webhook with this URL and OpenClaw POSTs the finished payload there.",
+  },
+  agent: {
+    title: "Agent ID",
+    simple: "Choose a specific OpenClaw agent.",
+    detailed: "Passed as --agent for immediate runs and cron jobs. Leave empty to use OpenClaw routing/default agent behavior.",
+  },
+  model: {
+    title: "Model override",
+    simple: "Choose a specific model for this run.",
+    detailed: "Passed as --model for immediate runs and agent cron jobs. Leave empty to use OpenClaw's configured model.",
   },
   thinking: {
     title: "Thinking",
@@ -265,6 +324,11 @@ const helpCatalog = {
     title: "Tools",
     simple: "Limit what the agent can use.",
     detailed: "Passed to cron jobs as --tools. Use comma-separated tool names like exec,read,write. Leave empty for OpenClaw defaults.",
+  },
+  stagger: {
+    title: "Stagger",
+    simple: "Spread cron runs by a small window.",
+    detailed: "Passed as --stagger for cron-expression jobs. Examples: 30s or 5m. Leave empty for OpenClaw's default behavior.",
   },
   wake: {
     title: "Wake",
@@ -322,14 +386,21 @@ const docsLinks = {
   "--agent": "https://docs.openclaw.ai/cli/agent#:~:text=--agent%20%3Cid%3E%3A%20agent%20id",
   "--announce": "https://docs.openclaw.ai/cli/cron#:~:text=--announce%20is%20runner%20fallback%20delivery",
   "--at": "https://docs.openclaw.ai/cli/cron#:~:text=--at%20%3Cdatetime%3E%20schedules%20a%20one-shot%20run",
+  "--best-effort-deliver": "https://docs.openclaw.ai/cli/cron",
   "--channel": "https://docs.openclaw.ai/cli/cron#:~:text=Announce%20to%20a%20specific%20channel",
   "--cron": "https://docs.openclaw.ai/cli/cron#scheduling",
+  "--delete-after-run": "https://docs.openclaw.ai/cli/cron",
+  "--description": "https://docs.openclaw.ai/cli/cron",
+  "--disabled": "https://docs.openclaw.ai/cli/cron",
   "--deliver": "https://docs.openclaw.ai/cli/agent#:~:text=--deliver%3A%20send%20the%20reply%20back%20to%20the%20selected%20channel%2Ftarget",
   "--every": "https://docs.openclaw.ai/cli/cron#scheduling",
+  "--exact": "https://docs.openclaw.ai/cli/cron",
   "--expect-final": "https://docs.openclaw.ai/cli/system#:~:text=--expect-final",
+  "--keep-after-run": "https://docs.openclaw.ai/cli/cron",
   "--json": "https://docs.openclaw.ai/cli/agent#:~:text=--json%3A%20output%20JSON",
   "--light-context": "https://docs.openclaw.ai/cli/cron#:~:text=--light-context%20applies%20to%20isolated%20agent-turn%20jobs%20only",
   "--message": "https://docs.openclaw.ai/cli/agent#:~:text=-m%2C%20--message%20%3Ctext%3E%3A%20required%20message%20body",
+  "--model": "https://docs.openclaw.ai/cli/agent#:~:text=--model",
   "--mode": "https://docs.openclaw.ai/cli/system#:~:text=--mode%20%3Cmode%3E%3A%20now%20or%20next-heartbeat",
   "--no-deliver": "https://docs.openclaw.ai/cli/cron#:~:text=--no-deliver%20disables%20that%20fallback",
   "--reply-account": "https://docs.openclaw.ai/cli/agent#:~:text=--reply-account%20%3Cid%3E%3A%20delivery%20account%20override",
@@ -339,6 +410,7 @@ const docsLinks = {
   "--session-id": "https://docs.openclaw.ai/cli/agent#:~:text=--session-id%20%3Cid%3E%3A%20explicit%20session%20id",
   "--session-key": "https://docs.openclaw.ai/cli/agent#:~:text=--session-key%20%3Ckey%3E%3A%20explicit%20session%20key",
   "--system-event": "https://docs.openclaw.ai/cli/cron#:~:text=--system-event",
+  "--stagger": "https://docs.openclaw.ai/cli/cron",
   "--text": "https://docs.openclaw.ai/cli/system#:~:text=--text%20%3Ctext%3E%3A%20required%20system%20event%20text",
   "--thinking": "https://docs.openclaw.ai/cli/agent#:~:text=--thinking%20%3Clevel%3E%3A%20agent%20thinking%20level",
   "--timeout": "https://docs.openclaw.ai/cli/agent#:~:text=--timeout%20%3Cseconds%3E%3A%20override%20agent%20timeout",
@@ -544,12 +616,22 @@ function renderPresets() {
   `).join("");
 }
 
+function jobScheduleLabel(job) {
+  const schedule = job.schedule || {};
+  if (typeof schedule === "string") return schedule;
+  if (schedule.kind === "cron") return `Cron ${schedule.expr || ""}`.trim();
+  if (schedule.kind === "every") return `Every ${schedule.every || schedule.interval || ""}`.trim();
+  if (schedule.kind === "at") return `At ${schedule.at || schedule.when || ""}`.trim();
+  return job.cron || job.every || job.nextRunAt || "scheduled";
+}
+
 function renderJobs() {
   els.jobCount.textContent = String(state.jobs.length);
   els.jobsList.innerHTML = state.jobs.map((job) => `
     <div class="job-row" data-help-key="jobRow">
       <strong>${escapeHtml(job.name || job.id || "OpenClaw job")}</strong>
-      <span>${escapeHtml(job.schedule || job.cron || job.every || job.nextRunAt || "scheduled")}</span>
+      <span>${escapeHtml(jobScheduleLabel(job))}</span>
+      <small>${escapeHtml([job.status, job.delivery?.mode, job.sessionTarget, job.wakeMode].filter(Boolean).join(" / "))}</small>
     </div>
   `).join("") || `<div class="empty">No cron jobs yet</div>`;
 }
@@ -621,7 +703,16 @@ function setDeliveryMode(mode) {
     button.classList.toggle("active", button.dataset.deliveryMode === clean);
   });
   els.deliverySummary.textContent = deliveryPresets[clean].label;
+  updateDeliveryControls();
   updatePreview();
+}
+
+function updateDeliveryControls() {
+  const mode = els.deliveryModeInput.value || "notify";
+  document.querySelectorAll(".delivery-control").forEach((control) => {
+    const modes = (control.dataset.delivery || "").split(/\s+/);
+    control.hidden = !modes.includes(mode);
+  });
 }
 
 function updateScheduleControls() {
@@ -687,30 +778,41 @@ function collectPayload(kindOverride = null) {
   const scheduleMode = els.scheduleMode.value;
   const deliveryMode = els.deliveryModeInput.value || "notify";
   const wantsDelivery = deliveryMode === "notify";
+  const enabled = els.enabledToggle.checked;
   const payload = {
     kind: kindOverride || (scheduleMode === "event" ? "event" : scheduleMode === "now" ? "agent" : "cron"),
     sessionKey: selectedSessionKey(),
     message: els.messageInput.value.trim(),
     text: els.messageInput.value.trim(),
+    name: els.jobNameInput.value.trim() || `${state.selectedSession?.label || "OpenClaw"} automation`,
+    description: els.descriptionInput.value.trim(),
+    enabled,
+    disabled: !enabled,
     deliveryMode,
     deliver: wantsDelivery && els.deliverToggle.checked,
     announce: wantsDelivery && els.deliverToggle.checked,
     noDeliver: !wantsDelivery,
+    webhook: els.webhookInput.value.trim(),
+    bestEffortDelivery: els.bestEffortDeliveryToggle.checked,
     expectFinal: els.expectFinalToggle.checked,
     lightContext: els.lightContextToggle.checked,
+    deleteAfterRun: els.deleteAfterRunToggle.checked,
+    exactTiming: els.exactTimingToggle.checked,
     replyChannel: els.replyChannelInput.value.trim(),
     replyTo: els.replyToInput.value.trim(),
     channel: els.replyChannelInput.value.trim(),
     to: els.replyToInput.value.trim(),
+    agent: els.agentInput.value.trim(),
+    model: els.modelInput.value.trim(),
     thinking: els.thinkingInput.value,
     timeoutSeconds: Number(els.timeoutInput.value || 600),
     scheduleMode,
-    name: `${state.selectedSession?.label || "OpenClaw"} automation`,
     at: els.atInput.value.trim(),
     every: els.everyInput.value.trim(),
     cron: els.cronInput.value.trim(),
     timezone: els.timezoneInput.value.trim(),
     tools: els.toolsInput.value.trim(),
+    stagger: els.staggerInput.value.trim(),
     wake: els.wakeInput.value,
     jobMode: els.jobModeInput.value,
     sessionTarget: els.sessionTargetInput.value,
@@ -896,15 +998,25 @@ window.addEventListener("resize", refreshVisibleHelpPosition);
     els.everyInput,
     els.cronInput,
     els.timezoneInput,
+    els.enabledToggle,
     els.deliverToggle,
     els.expectFinalToggle,
     els.lightContextToggle,
+    els.deleteAfterRunToggle,
+    els.exactTimingToggle,
+    els.bestEffortDeliveryToggle,
+    els.jobNameInput,
+    els.descriptionInput,
     els.sessionKeyInput,
     els.replyChannelInput,
     els.replyToInput,
+    els.webhookInput,
+    els.agentInput,
+    els.modelInput,
     els.thinkingInput,
     els.timeoutInput,
     els.toolsInput,
+    els.staggerInput,
     els.wakeInput,
     els.jobModeInput,
     els.sessionTargetInput,

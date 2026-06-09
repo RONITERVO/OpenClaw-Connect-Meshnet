@@ -17,9 +17,9 @@ Start-OpenClaw-Automator.cmd
 - Pick a chat session.
 - Write the message the agent should receive.
 - Choose a schedule preset: now, in 30 minutes, every 2 hours, morning, weekdays, or hourly.
-- Choose whether the answer should message you back or run quietly.
+- Choose whether the answer should message you back, POST to a webhook, or run quietly.
 - Let the backend fill reply targets for Telegram sessions.
-- Open **Advanced settings** only when you need exact schedule fields, session-key override, cron session target, tools, wake mode, or system-event mode.
+- Open **Advanced settings** only when you need exact schedule fields, job name/description, enabled state, session-key override, cron session target, agent/model override, tools, webhook URL, stagger/exact cron timing, wake mode, or system-event mode.
 - Hover on a control for 5 seconds to show contextual labels.
 - Use **Simple** labels for plain-language explanations, or **Detailed** labels to see the exact OpenClaw behavior before acting.
 - Click OpenClaw flag names inside Detailed labels, such as `--light-context`, to open the relevant official documentation page.
@@ -48,6 +48,8 @@ openclaw cron add `
   --expect-final `
   --no-deliver
 ```
+
+Advanced cron controls mirror the useful Gateway `/cron` fields: `--disabled`, `--description`, `--agent`, `--model`, `--webhook`, `--best-effort-deliver`, `--stagger`, `--exact`, `--delete-after-run`, and `--keep-after-run`.
 
 ## Requirements
 

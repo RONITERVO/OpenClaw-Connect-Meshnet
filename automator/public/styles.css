@@ -114,6 +114,7 @@ h3 {
 .session-card span,
 .session-card small,
 .job-row span,
+.job-row small,
 .check-row span {
   color: var(--muted);
 }
