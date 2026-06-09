@@ -17,6 +17,7 @@ const els = {
   helpSimpleBtn: $("helpSimpleBtn"),
   helpDetailedBtn: $("helpDetailedBtn"),
   helpBubble: $("helpBubble"),
+  helpCloseBtn: $("helpCloseBtn"),
   helpBubbleTitle: $("helpBubbleTitle"),
   helpBubbleText: $("helpBubbleText"),
   refreshBtn: $("refreshBtn"),
@@ -741,6 +742,7 @@ document.addEventListener("focusout", (event) => {
 });
 document.addEventListener("blur", () => cancelQueuedHelp(), true);
 els.helpBubble.addEventListener("mouseenter", () => clearTimeout(state.helpTimer));
+els.helpCloseBtn.addEventListener("click", hideHelp);
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") hideHelp();
 });

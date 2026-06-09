@@ -30,7 +30,7 @@ What it does:
 - supports advanced settings for session key, reply target, thinking level, timeout, tools, wake mode, and system-event flows
 - shows delayed contextual labels after a 5-second hover, with Simple and Detailed modes
 - links known OpenClaw flags inside Detailed labels to the relevant official docs pages
-- keeps an opened label visible while you move to its docs links, until you click elsewhere or press Escape
+- keeps an opened label visible while you move to its docs links, until you click `x`, click elsewhere, or press Escape
 
 Build a distributable zip:
 

@@ -21,7 +21,7 @@ Start-OpenClaw-Automator.cmd
 - Hover on a control for 5 seconds to show contextual labels.
 - Use **Simple** labels for plain-language explanations, or **Detailed** labels to see the exact OpenClaw behavior before acting.
 - Click OpenClaw flag names inside Detailed labels, such as `--light-context`, to open the relevant official documentation page.
-- Open labels stay visible while you move the mouse to their links; click elsewhere or press Escape to close them.
+- Open labels stay visible while you move the mouse to their links; click `x`, click elsewhere, or press Escape to close them.
 
 For a selected Telegram direct session, the immediate command is equivalent to:
 

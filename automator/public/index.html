@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OpenClaw Automator</title>
-  <link rel="stylesheet" href="./styles.css?v=0.3.1">
+  <link rel="stylesheet" href="./styles.css?v=0.3.2">
 </head>
 <body>
   <main class="shell">
@@ -191,9 +191,12 @@
     </section>
   </main>
   <div id="helpBubble" class="help-bubble" role="tooltip" hidden>
-    <div id="helpBubbleTitle" class="help-title"></div>
+    <div class="help-head">
+      <div id="helpBubbleTitle" class="help-title"></div>
+      <button id="helpCloseBtn" class="help-close" type="button" aria-label="Close label">x</button>
+    </div>
     <div id="helpBubbleText" class="help-text"></div>
   </div>
-  <script src="./app.js?v=0.3.1" type="module"></script>
+  <script src="./app.js?v=0.3.2" type="module"></script>
 </body>
 </html>

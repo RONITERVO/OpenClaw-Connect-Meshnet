@@ -482,10 +482,39 @@ button:disabled {
   display: none;
 }
 
+.help-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
 .help-title {
   color: var(--cyan);
   font-weight: 800;
-  margin-bottom: 6px;
+}
+
+.help-close {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 6px;
+  border: 1px solid rgba(156, 164, 178, 0.35);
+  background: rgba(255, 255, 255, 0.06);
+  color: #d7dce6;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.help-close:hover,
+.help-close:focus-visible {
+  border-color: rgba(49, 198, 212, 0.85);
+  color: #ffffff;
+  background: rgba(49, 198, 212, 0.16);
 }
 
 .help-text {
