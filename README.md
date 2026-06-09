@@ -29,6 +29,7 @@ What it does:
 - creates scheduled jobs with `openclaw cron add`
 - supports advanced settings for session key, reply target, thinking level, timeout, tools, wake mode, and system-event flows
 - shows delayed contextual labels after a 5-second hover, with Simple and Detailed modes
+- links known OpenClaw flags inside Detailed labels to the relevant official docs pages
 
 Build a distributable zip:
 

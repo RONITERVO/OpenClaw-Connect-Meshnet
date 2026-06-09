@@ -475,7 +475,7 @@ button:disabled {
   border-radius: 8px;
   padding: 12px 14px;
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .help-bubble[hidden] {
@@ -492,6 +492,21 @@ button:disabled {
   color: #d7dce6;
   line-height: 1.45;
   font-size: 13px;
+}
+
+.help-text a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  color: var(--cyan);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-weight: 800;
+}
+
+.help-text a:hover {
+  color: #8af1fb;
 }
 
 body[data-help-mode="detailed"] .help-bubble {

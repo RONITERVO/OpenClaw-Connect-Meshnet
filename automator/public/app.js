@@ -256,6 +256,38 @@ const helpCatalog = {
   },
 };
 
+const docsLinks = {
+  "--agent": "https://docs.openclaw.ai/cli/agent#:~:text=--agent%20%3Cid%3E%3A%20agent%20id",
+  "--announce": "https://docs.openclaw.ai/cli/cron#:~:text=--announce%20is%20runner%20fallback%20delivery",
+  "--at": "https://docs.openclaw.ai/cli/cron#:~:text=--at%20%3Cdatetime%3E%20schedules%20a%20one-shot%20run",
+  "--channel": "https://docs.openclaw.ai/cli/cron#:~:text=Announce%20to%20a%20specific%20channel",
+  "--cron": "https://docs.openclaw.ai/cli/cron#scheduling",
+  "--deliver": "https://docs.openclaw.ai/cli/agent#:~:text=--deliver%3A%20send%20the%20reply%20back%20to%20the%20selected%20channel%2Ftarget",
+  "--every": "https://docs.openclaw.ai/cli/cron#scheduling",
+  "--expect-final": "https://docs.openclaw.ai/cli/system#:~:text=--expect-final",
+  "--json": "https://docs.openclaw.ai/cli/agent#:~:text=--json%3A%20output%20JSON",
+  "--light-context": "https://docs.openclaw.ai/cli/cron#:~:text=--light-context%20applies%20to%20isolated%20agent-turn%20jobs%20only",
+  "--message": "https://docs.openclaw.ai/cli/agent#:~:text=-m%2C%20--message%20%3Ctext%3E%3A%20required%20message%20body",
+  "--mode": "https://docs.openclaw.ai/cli/system#:~:text=--mode%20%3Cmode%3E%3A%20now%20or%20next-heartbeat",
+  "--no-deliver": "https://docs.openclaw.ai/cli/cron#:~:text=--no-deliver%20disables%20that%20fallback",
+  "--reply-account": "https://docs.openclaw.ai/cli/agent#:~:text=--reply-account%20%3Cid%3E%3A%20delivery%20account%20override",
+  "--reply-channel": "https://docs.openclaw.ai/cli/agent#:~:text=--reply-channel%20%3Cchannel%3E%3A%20delivery%20channel%20override",
+  "--reply-to": "https://docs.openclaw.ai/cli/agent#:~:text=--reply-to%20%3Ctarget%3E%3A%20delivery%20target%20override",
+  "--session": "https://docs.openclaw.ai/cli/cron#sessions",
+  "--session-id": "https://docs.openclaw.ai/cli/agent#:~:text=--session-id%20%3Cid%3E%3A%20explicit%20session%20id",
+  "--session-key": "https://docs.openclaw.ai/cli/agent#:~:text=--session-key%20%3Ckey%3E%3A%20explicit%20session%20key",
+  "--system-event": "https://docs.openclaw.ai/cli/cron#:~:text=--system-event",
+  "--text": "https://docs.openclaw.ai/cli/system#:~:text=--text%20%3Ctext%3E%3A%20required%20system%20event%20text",
+  "--thinking": "https://docs.openclaw.ai/cli/agent#:~:text=--thinking%20%3Clevel%3E%3A%20agent%20thinking%20level",
+  "--timeout": "https://docs.openclaw.ai/cli/agent#:~:text=--timeout%20%3Cseconds%3E%3A%20override%20agent%20timeout",
+  "--timeout-seconds": "https://docs.openclaw.ai/cli/cron",
+  "--to": "https://docs.openclaw.ai/cli/cron#:~:text=Announce%20to%20a%20specific%20channel",
+  "--tools": "https://docs.openclaw.ai/cli/cron",
+  "--tz": "https://docs.openclaw.ai/cli/cron#:~:text=--tz%20%3Ciana%3E",
+  "--wake": "https://docs.openclaw.ai/cli/cron",
+  "--webhook": "https://docs.openclaw.ai/cli/cron#:~:text=Use%20--webhook%20%3Curl%3E",
+};
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -282,6 +314,35 @@ function helpTextFor(element) {
   };
 }
 
+function renderLinkedHelp(container, text) {
+  container.replaceChildren();
+  const pattern = /--[a-z][a-z0-9-]*/gi;
+  let cursor = 0;
+  for (const match of text.matchAll(pattern)) {
+    const flag = match[0];
+    const index = match.index ?? 0;
+    if (index > cursor) {
+      container.append(document.createTextNode(text.slice(cursor, index)));
+    }
+    const href = docsLinks[flag];
+    if (href) {
+      const link = document.createElement("a");
+      link.href = href;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      link.textContent = flag;
+      link.title = `Open OpenClaw docs for ${flag}`;
+      container.append(link);
+    } else {
+      container.append(document.createTextNode(flag));
+    }
+    cursor = index + flag.length;
+  }
+  if (cursor < text.length) {
+    container.append(document.createTextNode(text.slice(cursor)));
+  }
+}
+
 function positionHelpBubble(target) {
   const rect = target.getBoundingClientRect();
   const bubble = els.helpBubble;
@@ -301,7 +362,7 @@ function showHelp(target) {
   const help = helpTextFor(target);
   if (!help.text) return;
   els.helpBubbleTitle.textContent = help.title;
-  els.helpBubbleText.textContent = help.text;
+  renderLinkedHelp(els.helpBubbleText, help.text);
   els.helpBubble.hidden = false;
   positionHelpBubble(target);
 }
@@ -622,6 +683,7 @@ function handleHelpLeave(event) {
   if (!state.helpTarget) return;
   const next = event.relatedTarget;
   if (next && state.helpTarget.contains(next)) return;
+  if (next && els.helpBubble.contains(next)) return;
   hideHelp();
 }
 
@@ -642,6 +704,8 @@ document.addEventListener("focus", (event) => {
 
 document.addEventListener("focusout", hideHelp);
 document.addEventListener("blur", hideHelp, true);
+els.helpBubble.addEventListener("mouseenter", () => clearTimeout(state.helpTimer));
+els.helpBubble.addEventListener("mouseleave", hideHelp);
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") hideHelp();
 });

@@ -20,6 +20,7 @@ Start-OpenClaw-Automator.cmd
 - Let the backend fill reply targets for Telegram sessions.
 - Hover on a control for 5 seconds to show contextual labels.
 - Use **Simple** labels for plain-language explanations, or **Detailed** labels to see the exact OpenClaw behavior before acting.
+- Click OpenClaw flag names inside Detailed labels, such as `--light-context`, to open the relevant official documentation page.
 
 For a selected Telegram direct session, the immediate command is equivalent to:
 
