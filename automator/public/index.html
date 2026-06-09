@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OpenClaw Automator</title>
-  <link rel="stylesheet" href="./styles.css?v=0.4.2">
+  <link rel="stylesheet" href="./styles.css?v=0.4.3">
 </head>
 <body>
   <main class="shell">
@@ -184,6 +184,38 @@
               <span>Best-effort delivery</span>
             </label>
           </div>
+          <section class="workflow-box" data-help-key="workflowState">
+            <div class="flow-head">
+              <h3>Workflow state</h3>
+              <span id="workflowSummary">Message only</span>
+            </div>
+            <label class="toggle" data-help-key="workflowAdaptive">
+              <input id="workflowAdaptiveToggle" type="checkbox" checked>
+              <span>Adaptive cron prompt</span>
+            </label>
+            <div class="advanced-grid workflow-grid">
+              <label class="field" data-help-key="workflowName">
+                <span>Workflow</span>
+                <input id="workflowNameInput" type="text" placeholder="PR review, long build, research task">
+              </label>
+              <label class="field" data-help-key="workflowStep">
+                <span>Current step</span>
+                <input id="workflowStepInput" type="text" placeholder="What step is active right now">
+              </label>
+              <label class="field" data-help-key="workflowNext">
+                <span>Next action</span>
+                <input id="workflowNextInput" type="text" placeholder="Exactly what the next run should do">
+              </label>
+              <label class="field" data-help-key="workflowDone">
+                <span>Done when</span>
+                <input id="workflowDoneInput" type="text" placeholder="How the agent knows this is finished">
+              </label>
+              <label class="field wide-field" data-help-key="workflowNote">
+                <span>State note</span>
+                <textarea id="workflowNoteInput" rows="3" placeholder="Small facts the next run should trust instead of rediscovering"></textarea>
+              </label>
+            </div>
+          </section>
           <div class="advanced-grid">
             <label class="field" data-help-key="jobName">
               <span>Job name</span>
@@ -310,6 +342,6 @@
     </div>
     <div id="helpBubbleText" class="help-text"></div>
   </div>
-  <script src="./app.js?v=0.4.2" type="module"></script>
+  <script src="./app.js?v=0.4.3" type="module"></script>
 </body>
 </html>

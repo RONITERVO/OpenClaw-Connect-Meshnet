@@ -447,6 +447,30 @@ textarea {
   margin-top: 12px;
 }
 
+.workflow-box {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  background: #10141a;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.workflow-grid {
+  margin-top: 0;
+}
+
+.wide-field {
+  grid-column: 1 / -1;
+}
+
+.field textarea {
+  min-height: 84px;
+  resize: vertical;
+  padding: 10px 12px;
+}
+
 .safety-panel {
   display: grid;
   gap: 10px;

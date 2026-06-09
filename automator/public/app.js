@@ -49,6 +49,13 @@ const els = {
   deleteAfterRunToggle: $("deleteAfterRunToggle"),
   exactTimingToggle: $("exactTimingToggle"),
   bestEffortDeliveryToggle: $("bestEffortDeliveryToggle"),
+  workflowSummary: $("workflowSummary"),
+  workflowAdaptiveToggle: $("workflowAdaptiveToggle"),
+  workflowNameInput: $("workflowNameInput"),
+  workflowStepInput: $("workflowStepInput"),
+  workflowNextInput: $("workflowNextInput"),
+  workflowDoneInput: $("workflowDoneInput"),
+  workflowNoteInput: $("workflowNoteInput"),
   jobNameInput: $("jobNameInput"),
   descriptionInput: $("descriptionInput"),
   sessionKeyInput: $("sessionKeyInput"),
@@ -243,6 +250,41 @@ const helpCatalog = {
     title: "Light context",
     simple: "Start with less extra memory.",
     detailed: "Adds --light-context to cron jobs. Use it for small reminders when you do not want a heavy context bootstrap.",
+  },
+  workflowState: {
+    title: "Workflow state",
+    simple: "Tell each scheduled run exactly where the work is.",
+    detailed: "Builds a compact state block into scheduled agent prompts. This helps a cron run act like you gave it a specific current-step instruction, instead of making it rediscover progress by reading large workflow-state files or searching old context.",
+  },
+  workflowAdaptive: {
+    title: "Adaptive cron prompt",
+    simple: "Add the workflow fields to scheduled prompts.",
+    detailed: "When enabled, cron/once-later/repeat jobs append a small source-of-truth block to --message. Ask Now and system events stay as the plain message.",
+  },
+  workflowName: {
+    title: "Workflow",
+    simple: "Name the larger task.",
+    detailed: "Included in the adaptive state block as the workflow label. Use something stable like PR review, long build, or invoice follow-up.",
+  },
+  workflowStep: {
+    title: "Current step",
+    simple: "What part is happening now.",
+    detailed: "Included as the current step the next scheduled run should trust. This reduces wasted time figuring out the next exact step from broad context.",
+  },
+  workflowNext: {
+    title: "Next action",
+    simple: "What the next run should do first.",
+    detailed: "Included as the first action for the next scheduled run. The prompt tells the agent to do this before broad research unless the action itself requires verification.",
+  },
+  workflowDone: {
+    title: "Done when",
+    simple: "How the agent knows to stop.",
+    detailed: "Included as the completion rule for the workflow. This helps repeated jobs avoid looping after the useful work is finished.",
+  },
+  workflowNote: {
+    title: "State note",
+    simple: "Small facts the next run should trust.",
+    detailed: "Included as concise state. Keep it short: paths, branch names, PR links, last verified result, or the exact blocker. Do not paste large logs or long workflow files here.",
   },
   deleteAfterRun: {
     title: "Delete after run",
@@ -481,6 +523,64 @@ function selectedDeliveryMatchesContext(payload, contextParts) {
   if (contextParts.surface !== "telegram") return false;
   const to = payload.replyTo || payload.to || "";
   return Boolean(to && contextParts.target && to === contextParts.target);
+}
+
+function workflowFields() {
+  return {
+    enabled: Boolean(els.workflowAdaptiveToggle?.checked),
+    name: els.workflowNameInput.value.trim(),
+    step: els.workflowStepInput.value.trim(),
+    next: els.workflowNextInput.value.trim(),
+    done: els.workflowDoneInput.value.trim(),
+    note: els.workflowNoteInput.value.trim(),
+  };
+}
+
+function workflowHasState(fields = workflowFields()) {
+  return Boolean(fields.name || fields.step || fields.next || fields.done || fields.note);
+}
+
+function shouldAttachWorkflowState(scheduleMode, jobMode) {
+  if (!els.workflowAdaptiveToggle.checked) return false;
+  if (jobMode === "system-event") return false;
+  if (scheduleMode === "now" || scheduleMode === "event") return false;
+  return workflowHasState();
+}
+
+function workflowStateBlock(fields = workflowFields()) {
+  const rows = [
+    ["Workflow", fields.name],
+    ["Current step", fields.step],
+    ["Next action", fields.next],
+    ["Done when", fields.done],
+    ["State note", fields.note],
+  ].filter(([, value]) => value);
+  if (!rows.length) return "";
+  return [
+    "",
+    "Workflow state for this scheduled run:",
+    ...rows.map(([label, value]) => `- ${label}: ${value}`),
+    "- Operating rule: Treat this compact block as the current workflow state for this run. Do the next action first. Do not spend the run rediscovering the step from large workflow-state files or old context unless this message explicitly asks you to verify something.",
+  ].join("\n");
+}
+
+function effectiveMessageText(scheduleMode, jobMode) {
+  const base = els.messageInput.value.trim();
+  if (!base) return "";
+  if (!shouldAttachWorkflowState(scheduleMode, jobMode)) return base;
+  return `${base}${workflowStateBlock()}`;
+}
+
+function updateWorkflowSummary() {
+  const fields = workflowFields();
+  if (!fields.enabled) {
+    els.workflowSummary.textContent = "Off";
+  } else if (!workflowHasState(fields)) {
+    els.workflowSummary.textContent = "Message only";
+  } else {
+    const count = [fields.name, fields.step, fields.next, fields.done, fields.note].filter(Boolean).length;
+    els.workflowSummary.textContent = `${count} state fields`;
+  }
 }
 
 function helpTextFor(element) {
@@ -826,11 +926,14 @@ function collectPayload(kindOverride = null) {
   const deliveryMode = els.deliveryModeInput.value || "notify";
   const wantsDelivery = deliveryMode === "notify";
   const enabled = els.enabledToggle.checked;
+  const jobMode = els.jobModeInput.value;
+  const effectiveMessage = effectiveMessageText(scheduleMode, jobMode);
   const payload = {
     kind: kindOverride || (scheduleMode === "event" ? "event" : scheduleMode === "now" ? "agent" : "cron"),
     sessionKey: selectedSessionKey(),
-    message: els.messageInput.value.trim(),
-    text: els.messageInput.value.trim(),
+    message: effectiveMessage,
+    baseMessage: els.messageInput.value.trim(),
+    text: effectiveMessage,
     name: els.jobNameInput.value.trim() || `${state.selectedSession?.label || "OpenClaw"} automation`,
     description: els.descriptionInput.value.trim(),
     enabled,
@@ -861,10 +964,145 @@ function collectPayload(kindOverride = null) {
     tools: els.toolsInput.value.trim(),
     stagger: els.staggerInput.value.trim(),
     wake: els.wakeInput.value,
-    jobMode: els.jobModeInput.value,
+    jobMode,
     sessionTarget: els.sessionTargetInput.value,
+    workflowStateAttached: shouldAttachWorkflowState(scheduleMode, jobMode),
+    workflow: workflowFields(),
   };
   return payload;
+}
+
+function scheduleLabelForPayload(payload) {
+  if (payload.scheduleMode === "now") return "Ask Now";
+  if (payload.scheduleMode === "at") return `Once later at ${payload.at || "unset"}`;
+  if (payload.scheduleMode === "every") return `Repeat every ${payload.every || "unset"}`;
+  if (payload.scheduleMode === "cron") return `Cron ${payload.cron || "unset"}${payload.timezone ? ` in ${payload.timezone}` : ""}`;
+  if (payload.scheduleMode === "event") return "System event now";
+  return payload.scheduleMode || "unknown";
+}
+
+const safetyCaseLookup = {
+  notReady: {
+    agent: "No agent run is ready yet because there is no complete prompt and route.",
+    user: "You still need to choose the chat and write the message before this can do anything.",
+    why: "The app cannot reason about routing until it has both a context session and prompt.",
+    fix: "Pick a chat and write the message first.",
+  },
+  contextOverride: {
+    agent: "The model will read the session from Session key override, not necessarily the chat card that is visually selected.",
+    user: "You may expect the selected chat to be used, but the override wins.",
+    why: "This is useful for intentional cross-session work, but dangerous when the override was accidental.",
+    fix: "If this was accidental, clear Session key override by selecting the intended chat again.",
+  },
+  agentOverride: {
+    agent: "The requested agent can differ from the agent encoded in the session key.",
+    user: "The chat name may look right while a different agent is actually asked to run.",
+    why: "Agent mismatch can change memory, tools, model defaults, and routing behavior.",
+    fix: "Leave Agent ID empty unless you deliberately want a different agent.",
+  },
+  replyMissing: {
+    agent: "The model can run, but the app does not have a concrete chat recipient for the final answer.",
+    user: "You may create work that finishes silently or fails delivery.",
+    why: "Message me requires a Reply to / delivery target.",
+    fix: "Pick a Telegram chat with reply ready, fill Reply to, or choose Quiet run.",
+  },
+  telegramMismatch: {
+    agent: "The model reads one Telegram session but sends the answer to a different Telegram target.",
+    user: "The answer can appear in a chat that is not the chat whose history/model context was read.",
+    why: "Cross-routing is powerful, but it can make later conversation history misleading.",
+    fix: "Keep it only if intentional; otherwise select the intended Telegram chat again.",
+  },
+  nonTelegramNotify: {
+    agent: "The model reads a local/non-Telegram session and sends the answer out through a delivery channel.",
+    user: "The final reply appears outside the session that supplied context.",
+    why: "This is common for heartbeat/status jobs, but should be visible every time.",
+    fix: "Use Quiet run if the output should stay internal, or keep Message me if you want the push notification.",
+  },
+  webhook: {
+    agent: "The model reads the configured session, then OpenClaw posts the finished payload to a webhook.",
+    user: "You will not see a normal chat reply unless the webhook system forwards it somewhere.",
+    why: "Webhook delivery leaves the chat surface and may trigger external automation.",
+    fix: "Use Message me for chat delivery, or verify the webhook URL before creating the job.",
+  },
+  quiet: {
+    agent: "The model reads and works, but the runner is told not to deliver a final answer.",
+    user: "You should inspect Gateway history/logs for results instead of expecting a chat message.",
+    why: "Quiet run is good for internal maintenance, but confusing for user-visible reminders.",
+    fix: "Choose Message me if you want a visible final answer.",
+  },
+  isolatedCron: {
+    agent: "The cron job starts from the configured session but runs in a dedicated isolated agent turn.",
+    user: "Repeated work is less likely to pollute the selected chat's main timeline.",
+    why: "Isolated is the safest default for repeated tasks.",
+    fix: "Keep isolated unless the job must post into the main timeline.",
+  },
+  mainCron: {
+    agent: "The scheduled agent work writes directly into the main target session.",
+    user: "Repeated runs can add context/messages into the session users may later chat in.",
+    why: "Main is useful for timeline-style automations, but it can make chat context grow quickly.",
+    fix: "Use isolated for ordinary repeated tasks.",
+  },
+  systemEventIsolated: {
+    agent: "A system event is configured away from main, which can make its lifecycle harder to follow.",
+    user: "The event may not show where you expect when reviewing the main session.",
+    why: "System events naturally belong in main-style session flow.",
+    fix: "Use Cron session main for system-event jobs unless you have a specific reason.",
+  },
+  disabled: {
+    agent: "The job definition is saved but the runner will skip it until enabled.",
+    user: "You will see the job in cron lists, but it will not run automatically.",
+    why: "Disabled jobs are good drafts; they are not active automation.",
+    fix: "Turn Enabled on when you are ready for scheduled execution.",
+  },
+  immediateWebhook: {
+    agent: "Ask Now does not route webhook delivery through this app.",
+    user: "The Run button is blocked because the configured delivery mode cannot work for immediate runs here.",
+    why: "Webhook is implemented for cron jobs via --webhook.",
+    fix: "Pick a schedule, or change Answer to Message me or Quiet run.",
+  },
+  adaptiveWorkflow: {
+    agent: "The scheduled prompt includes a compact workflow-state block as current-step source of truth.",
+    user: "Each cron run starts with the precise step and next action you wrote here, instead of guessing from broad history.",
+    why: "This reduces slow rediscovery and avoids reading large workflow-state files just to find the next step.",
+    fix: "Keep the workflow fields short and update them when the real next step changes.",
+  },
+  ok: {
+    agent: "The model reads and replies through the same selected route as closely as OpenClaw exposes it.",
+    user: "This is the normal safe path.",
+    why: "No conflicting advanced routing was detected.",
+    fix: "Run or schedule when the prompt looks right.",
+  },
+};
+
+function safetySettingsLine(payload, meta) {
+  return [
+    `selected chat=${meta.selectedLabel}`,
+    `context=${meta.contextLabel}`,
+    `schedule=${scheduleLabelForPayload(payload)}`,
+    `cron session=${payload.kind === "cron" ? payload.sessionTarget : "not cron"}`,
+    `job mode=${payload.jobMode}`,
+    `delivery=${deliveryLabel(payload)}`,
+    `agent override=${payload.agent || "none"}`,
+    `model override=${payload.model || "none"}`,
+    `adaptive workflow=${payload.workflowStateAttached ? "on" : "off"}`,
+  ].join("; ");
+}
+
+function decorateSafetyItem(item, payload, meta) {
+  const lookup = safetyCaseLookup[item.caseId] || safetyCaseLookup.ok;
+  const detail = [
+    `Current situation: ${item.text}`,
+    `Configured settings: ${safetySettingsLine(payload, meta)}.`,
+    `Agent perspective: ${lookup.agent}`,
+    `User perspective: ${lookup.user}`,
+    `Why it matters: ${lookup.why}`,
+    `Safe interpretation: ${lookup.fix}`,
+  ].join(" ");
+  return {
+    ...item,
+    simple: item.text,
+    detailed: detail,
+  };
 }
 
 function buildSafetyItems(payload) {
@@ -879,15 +1117,18 @@ function buildSafetyItems(payload) {
 
   if (!contextKey || !payload.message) {
     items.push({
+      caseId: "notReady",
       severity: "notice",
       title: "Not ready yet",
       text: "Pick a chat and write a message first.",
     });
-    return items;
+    const meta = { contextLabel, selectedLabel };
+    return items.map((item) => decorateSafetyItem(item, payload, meta));
   }
 
   if (selectedKey && contextKey !== selectedKey) {
     items.push({
+      caseId: "contextOverride",
       severity: "warning",
       title: "Context was changed",
       text: `The selected chat is ${selectedLabel}, but the agent will read ${contextLabel}. This usually means Session key override was changed.`,
@@ -896,6 +1137,7 @@ function buildSafetyItems(payload) {
 
   if (payload.agent && payload.agent !== contextParts.agentId) {
     items.push({
+      caseId: "agentOverride",
       severity: "warning",
       title: "Agent override",
       text: `Session key points at agent ${contextParts.agentId}, but Agent ID override is ${payload.agent}. The run may use a different agent than the chat suggests.`,
@@ -906,18 +1148,21 @@ function buildSafetyItems(payload) {
     const delivery = deliveryLabel(payload);
     if (!payload.replyTo && !payload.to) {
       items.push({
+        caseId: "replyMissing",
         severity: "danger",
         title: "Reply target missing",
         text: `The agent will read ${contextLabel}, but the app does not know who should receive the answer.`,
       });
     } else if (contextParts.surface === "telegram" && !selectedDeliveryMatchesContext(payload, contextParts)) {
       items.push({
+        caseId: "telegramMismatch",
         severity: "warning",
         title: "Reads one chat, replies somewhere else",
         text: `The agent will read ${contextLabel}, but the answer will be sent to ${delivery}. This can be intentional, but it is easy to confuse later.`,
       });
     } else if (contextParts.surface !== "telegram") {
       items.push({
+        caseId: "nonTelegramNotify",
         severity: "warning",
         title: "Reply leaves the context chat",
         text: `The agent will read ${contextLabel}, but the answer will be sent to ${delivery}. The reply will not land in the same place the model read from.`,
@@ -927,6 +1172,7 @@ function buildSafetyItems(payload) {
 
   if (payload.deliveryMode === "webhook") {
     items.push({
+      caseId: "webhook",
       severity: payload.webhook ? "warning" : "danger",
       title: payload.webhook ? "Reply goes to webhook" : "Webhook URL missing",
       text: payload.webhook
@@ -937,6 +1183,7 @@ function buildSafetyItems(payload) {
 
   if (payload.deliveryMode === "quiet") {
     items.push({
+      caseId: "quiet",
       severity: "notice",
       title: "No chat reply",
       text: `The agent will read ${contextLabel}, but no final answer will be delivered back to a chat.`,
@@ -945,6 +1192,7 @@ function buildSafetyItems(payload) {
 
   if (isCron && payload.sessionTarget === "isolated") {
     items.push({
+      caseId: "isolatedCron",
       severity: "notice",
       title: "Cron uses an isolated run",
       text: `The scheduled job is seeded from ${contextLabel}, then runs in its own isolated agent turn. That is usually safest for repeated jobs.`,
@@ -953,6 +1201,7 @@ function buildSafetyItems(payload) {
 
   if (isCron && payload.sessionTarget === "main" && payload.jobMode !== "system-event") {
     items.push({
+      caseId: "mainCron",
       severity: "warning",
       title: "Cron writes into main session",
       text: `This agent job uses main instead of isolated. Repeated runs may add context directly to ${contextLabel}.`,
@@ -961,6 +1210,7 @@ function buildSafetyItems(payload) {
 
   if (isCron && payload.jobMode === "system-event" && payload.sessionTarget !== "main") {
     items.push({
+      caseId: "systemEventIsolated",
       severity: "warning",
       title: "System event not on main",
       text: "System events normally belong on main. Using isolated can make the event harder to reason about.",
@@ -969,6 +1219,7 @@ function buildSafetyItems(payload) {
 
   if (isCron && !payload.enabled) {
     items.push({
+      caseId: "disabled",
       severity: "notice",
       title: "Saved disabled",
       text: "This cron job will be saved but will not run until you enable it.",
@@ -977,21 +1228,33 @@ function buildSafetyItems(payload) {
 
   if (isImmediateAgent && payload.deliveryMode === "webhook") {
     items.push({
+      caseId: "immediateWebhook",
       severity: "danger",
       title: "Webhook is cron-only here",
       text: "Ask Now does not use webhook delivery in this app. Pick a schedule or choose Message me/Quiet run.",
     });
   }
 
+  if (payload.workflowStateAttached) {
+    items.push({
+      caseId: "adaptiveWorkflow",
+      severity: "notice",
+      title: "Adaptive workflow prompt",
+      text: "This scheduled run will include your compact workflow state and next action inside the prompt.",
+    });
+  }
+
   if (!items.length) {
     items.push({
+      caseId: "ok",
       severity: "ok",
       title: "Looks matched",
       text: `The agent reads ${contextLabel}, and the reply route matches the selected chat as closely as OpenClaw exposes it.`,
     });
   }
 
-  return items;
+  const meta = { contextLabel, selectedLabel };
+  return items.map((item) => decorateSafetyItem(item, payload, meta));
 }
 
 function renderSafety(items) {
@@ -1003,7 +1266,7 @@ function renderSafety(items) {
   els.safetyPanel.className = `safety-panel ${panelClass}`;
   els.safetySummary.textContent = waiting ? "Waiting for message" : worst >= 3 ? "Needs fix" : worst >= 2 ? "Check routing" : worst >= 1 ? "Heads up" : "Looks safe";
   els.safetyList.innerHTML = items.map((item) => `
-    <div class="safety-item ${escapeHtml(item.severity)}">
+    <div class="safety-item ${escapeHtml(item.severity)}" data-help-key="safetyPanel" data-help-title="${escapeHtml(item.title)}" data-help-simple="${escapeHtml(item.simple || item.text)}" data-help-detailed="${escapeHtml(item.detailed || item.text)}">
       <strong>${escapeHtml(item.title)}</strong>
       <span>${escapeHtml(item.text)}</span>
     </div>
@@ -1021,6 +1284,7 @@ function syncActionState() {
 }
 
 async function updatePreview() {
+  updateWorkflowSummary();
   const payload = collectPayload();
   updateSafety(payload);
   syncActionState();
@@ -1200,6 +1464,12 @@ window.addEventListener("resize", refreshVisibleHelpPosition);
     els.deleteAfterRunToggle,
     els.exactTimingToggle,
     els.bestEffortDeliveryToggle,
+    els.workflowAdaptiveToggle,
+    els.workflowNameInput,
+    els.workflowStepInput,
+    els.workflowNextInput,
+    els.workflowDoneInput,
+    els.workflowNoteInput,
     els.jobNameInput,
     els.descriptionInput,
     els.sessionKeyInput,
