@@ -251,25 +251,17 @@ function workflowStepMessage(workflow) {
   const lines = [
     workflow.baseMessage,
     "",
-    "Step plan controller for this scheduled run:",
+    "Important research and development, and final output to be realized on this session. Final output. Consequence: will auto apply and persist. After complete changes blocked for good. Starter info:",
     `- Workflow ID: ${workflow.id}`,
     `- Cron job ID: ${workflow.jobId || "pending"}`,
     `- Workflow: ${workflow.name || "Unnamed workflow"}`,
-    `- Active step: ${step.index + 1} of ${workflow.steps.length}`,
-    `- Step name: ${step.name}`,
-    `- Next action: ${step.action}`,
+    //`- Active step: ${step.index + 1} of ${workflow.steps.length}`,
+    `- Research and development name: ${step.name}`,
+    `- Deep thinking, safetywork, background work an concrete problem solving on: ${step.action}. Then minimal most efficient output that resolves this longterm and does not need to be patched in the future by claude. If the job is impossible for you; stop, then research online or ask. But if you are capable getting this done then go ahead.`,
   ];
   if (step.done) lines.push(`- Done when: ${step.done}`);
   if (step.note) lines.push(`- State note: ${step.note}`);
   lines.push(
-    "",
-    "Progression rules:",
-    "- Work only this active step. Do not skip ahead.",
-    "- If the step is blocked or fails, do not mark it complete. Report blocked or failed and leave the active step unchanged.",
-    "- Advance only after the done condition is actually met.",
-    "- After a complete, blocked, or failed result, call exactly one local controller command below.",
-    "- The OpenClaw Automator backend must be running at the local controller URL when you report status. If it is unavailable, explain that the workflow controller could not be updated.",
-    "",
     `If COMPLETE, call: ${workflowAdvanceCommand(workflow, step, "complete")}`,
     `If BLOCKED, call: ${workflowAdvanceCommand(workflow, step, "blocked")}`,
     `If FAILED, call: ${workflowAdvanceCommand(workflow, step, "failed")}`,
