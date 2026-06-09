@@ -8,6 +8,7 @@ const state = {
   helpTimer: null,
   helpPendingTarget: null,
   helpVisibleTarget: null,
+  safetyBlocks: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -30,6 +31,9 @@ const els = {
   composerTitle: $("composerTitle"),
   presetRow: $("presetRow"),
   messageInput: $("messageInput"),
+  safetyPanel: $("safetyPanel"),
+  safetySummary: $("safetySummary"),
+  safetyList: $("safetyList"),
   scheduleSummary: $("scheduleSummary"),
   deliverySummary: $("deliverySummary"),
   deliveryModeInput: $("deliveryModeInput"),
@@ -345,6 +349,11 @@ const helpCatalog = {
     simple: "This shows what the app will do.",
     detailed: "This is the exact OpenClaw CLI command shape the backend will execute. The backend uses argument arrays, so this preview is for review, not shell execution.",
   },
+  safetyPanel: {
+    title: "Safety check",
+    simple: "The app checks where the agent reads and where the answer goes.",
+    detailed: "Compares --session-key context, cron --session mode, delivery mode, reply target, webhook URL, selected chat, and advanced overrides. It warns even when the routing can be intentional, because silent context/reply mismatches are easy to miss.",
+  },
   primaryAction: {
     title: "Run or create",
     simple: "Press this when you are ready.",
@@ -434,6 +443,44 @@ function shortKey(key) {
   if (!key) return "";
   if (key.length <= 40) return key;
   return `${key.slice(0, 22)}...${key.slice(-12)}`;
+}
+
+function parseSessionKey(key = "") {
+  const parts = String(key).split(":");
+  return {
+    raw: String(key || ""),
+    agentId: parts[1] || "main",
+    surface: parts[2] || "main",
+    scope: parts[3] || "",
+    target: parts.slice(4).join(":"),
+  };
+}
+
+function sessionLabelFromKey(key = "") {
+  const session = state.sessions.find((item) => item.key === key);
+  if (session?.label) return session.label;
+  const parts = parseSessionKey(key);
+  if (!key) return "no chat";
+  if (parts.surface === "telegram" && parts.scope === "direct") return `Telegram ${parts.target}`;
+  if (parts.surface === "telegram" && parts.scope === "group") return `Telegram group ${parts.target}`;
+  if (parts.surface === "main" && parts.scope === "heartbeat") return "Heartbeat";
+  if (parts.surface === "main") return "OpenClaw web chat";
+  return shortKey(key);
+}
+
+function deliveryLabel(payload) {
+  if (payload.deliveryMode === "webhook") return payload.webhook ? `Webhook ${payload.webhook}` : "Webhook URL missing";
+  if (payload.deliveryMode === "quiet") return "nowhere; quiet run";
+  const channel = payload.replyChannel || payload.channel || "selected channel";
+  const to = payload.replyTo || payload.to || "";
+  return to ? `${channel} ${to}` : `${channel}, but no recipient filled`;
+}
+
+function selectedDeliveryMatchesContext(payload, contextParts) {
+  if (payload.deliveryMode !== "notify") return false;
+  if (contextParts.surface !== "telegram") return false;
+  const to = payload.replyTo || payload.to || "";
+  return Boolean(to && contextParts.target && to === contextParts.target);
 }
 
 function helpTextFor(element) {
@@ -820,14 +867,162 @@ function collectPayload(kindOverride = null) {
   return payload;
 }
 
+function buildSafetyItems(payload) {
+  const items = [];
+  const contextKey = payload.sessionKey;
+  const selectedKey = state.selectedSession?.key || "";
+  const contextParts = parseSessionKey(contextKey);
+  const contextLabel = sessionLabelFromKey(contextKey);
+  const selectedLabel = state.selectedSession?.label || "selected chat";
+  const isCron = payload.kind === "cron";
+  const isImmediateAgent = payload.kind === "agent";
+
+  if (!contextKey || !payload.message) {
+    items.push({
+      severity: "notice",
+      title: "Not ready yet",
+      text: "Pick a chat and write a message first.",
+    });
+    return items;
+  }
+
+  if (selectedKey && contextKey !== selectedKey) {
+    items.push({
+      severity: "warning",
+      title: "Context was changed",
+      text: `The selected chat is ${selectedLabel}, but the agent will read ${contextLabel}. This usually means Session key override was changed.`,
+    });
+  }
+
+  if (payload.agent && payload.agent !== contextParts.agentId) {
+    items.push({
+      severity: "warning",
+      title: "Agent override",
+      text: `Session key points at agent ${contextParts.agentId}, but Agent ID override is ${payload.agent}. The run may use a different agent than the chat suggests.`,
+    });
+  }
+
+  if (payload.deliveryMode === "notify") {
+    const delivery = deliveryLabel(payload);
+    if (!payload.replyTo && !payload.to) {
+      items.push({
+        severity: "danger",
+        title: "Reply target missing",
+        text: `The agent will read ${contextLabel}, but the app does not know who should receive the answer.`,
+      });
+    } else if (contextParts.surface === "telegram" && !selectedDeliveryMatchesContext(payload, contextParts)) {
+      items.push({
+        severity: "warning",
+        title: "Reads one chat, replies somewhere else",
+        text: `The agent will read ${contextLabel}, but the answer will be sent to ${delivery}. This can be intentional, but it is easy to confuse later.`,
+      });
+    } else if (contextParts.surface !== "telegram") {
+      items.push({
+        severity: "warning",
+        title: "Reply leaves the context chat",
+        text: `The agent will read ${contextLabel}, but the answer will be sent to ${delivery}. The reply will not land in the same place the model read from.`,
+      });
+    }
+  }
+
+  if (payload.deliveryMode === "webhook") {
+    items.push({
+      severity: payload.webhook ? "warning" : "danger",
+      title: payload.webhook ? "Reply goes to webhook" : "Webhook URL missing",
+      text: payload.webhook
+        ? `The agent will read ${contextLabel}, but the answer will be POSTed to ${payload.webhook}, not sent back to the chat.`
+        : `The agent will read ${contextLabel}, but Webhook delivery needs a URL before this can work.`,
+    });
+  }
+
+  if (payload.deliveryMode === "quiet") {
+    items.push({
+      severity: "notice",
+      title: "No chat reply",
+      text: `The agent will read ${contextLabel}, but no final answer will be delivered back to a chat.`,
+    });
+  }
+
+  if (isCron && payload.sessionTarget === "isolated") {
+    items.push({
+      severity: "notice",
+      title: "Cron uses an isolated run",
+      text: `The scheduled job is seeded from ${contextLabel}, then runs in its own isolated agent turn. That is usually safest for repeated jobs.`,
+    });
+  }
+
+  if (isCron && payload.sessionTarget === "main" && payload.jobMode !== "system-event") {
+    items.push({
+      severity: "warning",
+      title: "Cron writes into main session",
+      text: `This agent job uses main instead of isolated. Repeated runs may add context directly to ${contextLabel}.`,
+    });
+  }
+
+  if (isCron && payload.jobMode === "system-event" && payload.sessionTarget !== "main") {
+    items.push({
+      severity: "warning",
+      title: "System event not on main",
+      text: "System events normally belong on main. Using isolated can make the event harder to reason about.",
+    });
+  }
+
+  if (isCron && !payload.enabled) {
+    items.push({
+      severity: "notice",
+      title: "Saved disabled",
+      text: "This cron job will be saved but will not run until you enable it.",
+    });
+  }
+
+  if (isImmediateAgent && payload.deliveryMode === "webhook") {
+    items.push({
+      severity: "danger",
+      title: "Webhook is cron-only here",
+      text: "Ask Now does not use webhook delivery in this app. Pick a schedule or choose Message me/Quiet run.",
+    });
+  }
+
+  if (!items.length) {
+    items.push({
+      severity: "ok",
+      title: "Looks matched",
+      text: `The agent reads ${contextLabel}, and the reply route matches the selected chat as closely as OpenClaw exposes it.`,
+    });
+  }
+
+  return items;
+}
+
+function renderSafety(items) {
+  const rank = { ok: 0, notice: 1, warning: 2, danger: 3 };
+  const worst = items.reduce((current, item) => Math.max(current, rank[item.severity] ?? 0), 0);
+  const panelClass = worst >= 3 ? "danger" : worst >= 2 ? "warning" : "ok";
+  const waiting = items.some((item) => item.title === "Not ready yet");
+  state.safetyBlocks = worst >= 3;
+  els.safetyPanel.className = `safety-panel ${panelClass}`;
+  els.safetySummary.textContent = waiting ? "Waiting for message" : worst >= 3 ? "Needs fix" : worst >= 2 ? "Check routing" : worst >= 1 ? "Heads up" : "Looks safe";
+  els.safetyList.innerHTML = items.map((item) => `
+    <div class="safety-item ${escapeHtml(item.severity)}">
+      <strong>${escapeHtml(item.title)}</strong>
+      <span>${escapeHtml(item.text)}</span>
+    </div>
+  `).join("");
+}
+
+function updateSafety(payload = collectPayload()) {
+  renderSafety(buildSafetyItems(payload));
+}
+
 function syncActionState() {
   const ready = Boolean(selectedSessionKey() && els.messageInput.value.trim());
-  els.primaryAction.disabled = !ready;
+  els.primaryAction.disabled = !ready || state.safetyBlocks;
   els.previewBtn.disabled = !ready;
 }
 
 async function updatePreview() {
   const payload = collectPayload();
+  updateSafety(payload);
   syncActionState();
   if (!payload.sessionKey || !payload.message) {
     els.commandPreview.textContent = "Select a chat and write a message.";

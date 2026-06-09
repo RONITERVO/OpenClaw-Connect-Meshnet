@@ -447,6 +447,76 @@ textarea {
   margin-top: 12px;
 }
 
+.safety-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  background: #10141a;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.safety-panel.warning {
+  border-color: rgba(240, 188, 94, 0.75);
+  background: #1d1710;
+}
+
+.safety-panel.danger {
+  border-color: rgba(255, 107, 107, 0.8);
+  background: #251114;
+}
+
+.safety-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.safety-head span {
+  color: var(--cyan);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.safety-list {
+  display: grid;
+  gap: 8px;
+}
+
+.safety-item {
+  border: 1px solid rgba(156, 164, 178, 0.25);
+  border-radius: 8px;
+  padding: 9px 10px;
+  color: #d7dce6;
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.safety-item strong {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--text);
+}
+
+.safety-item span {
+  display: block;
+}
+
+.safety-item.warning {
+  border-color: rgba(240, 188, 94, 0.55);
+}
+
+.safety-item.danger {
+  border-color: rgba(255, 107, 107, 0.65);
+}
+
+.safety-item.notice {
+  border-color: rgba(49, 198, 212, 0.4);
+}
+
 .command-preview {
   min-height: 48px;
   margin-top: 14px;

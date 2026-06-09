@@ -20,6 +20,7 @@ Start-OpenClaw-Automator.cmd
 - Choose whether the answer should message you back, POST to a webhook, or run quietly.
 - Let the backend fill reply targets for Telegram sessions.
 - Open **Advanced settings** only when you need exact schedule fields, job name/description, enabled state, session-key override, cron session target, agent/model override, tools, webhook URL, stagger/exact cron timing, wake mode, or system-event mode.
+- Watch the **Safety check** panel. It warns when the agent reads one chat/session but the answer goes somewhere else, even when that setup is technically valid.
 - Hover on a control for 5 seconds to show contextual labels.
 - Use **Simple** labels for plain-language explanations, or **Detailed** labels to see the exact OpenClaw behavior before acting.
 - Click OpenClaw flag names inside Detailed labels, such as `--light-context`, to open the relevant official documentation page.

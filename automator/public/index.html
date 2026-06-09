@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OpenClaw Automator</title>
-  <link rel="stylesheet" href="./styles.css?v=0.4.1">
+  <link rel="stylesheet" href="./styles.css?v=0.4.2">
 </head>
 <body>
   <main class="shell">
@@ -265,6 +265,16 @@
           </div>
         </details>
 
+        <section id="safetyPanel" class="safety-panel ok" data-help-key="safetyPanel">
+          <div class="safety-head">
+            <h3>Safety check</h3>
+            <span id="safetySummary">Waiting for message</span>
+          </div>
+          <div id="safetyList" class="safety-list">
+            <div class="safety-item notice">Pick a chat and write a message first.</div>
+          </div>
+        </section>
+
         <div class="command-preview" id="commandPreview" data-help-key="commandPreview">Select a chat and write a message.</div>
 
         <div class="action-row">
@@ -300,6 +310,6 @@
     </div>
     <div id="helpBubbleText" class="help-text"></div>
   </div>
-  <script src="./app.js?v=0.4.1" type="module"></script>
+  <script src="./app.js?v=0.4.2" type="module"></script>
 </body>
 </html>
