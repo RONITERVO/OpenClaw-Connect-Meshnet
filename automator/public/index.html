@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenClaw Automator</title>
+  <link rel="stylesheet" href="./styles.css?v=0.4.7">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark">OC</div>
+        <div>
+          <h1>OpenClaw Automator</h1>
+          <p id="statusLine">Loading local OpenClaw state</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <div class="help-mode" role="group" aria-label="Help detail">
+          <button id="helpSimpleBtn" class="help-choice active" type="button" data-help-mode="simple" data-help-key="helpSimple">Simple</button>
+          <button id="helpDetailedBtn" class="help-choice" type="button" data-help-mode="detailed" data-help-key="helpDetailed">Detailed</button>
+        </div>
+        <button id="refreshBtn" class="icon-button" title="Refresh state" data-help-key="refresh">Refresh</button>
+        <a id="gatewayLink" class="ghost-button" href="http://127.0.0.1:18789/" target="_blank" rel="noreferrer" data-help-key="gateway">Open Gateway</a>
+        <a id="cronLink" class="ghost-button" href="http://127.0.0.1:18789/cron" target="_blank" rel="noreferrer" data-help-key="gatewayCron">Open Cron</a>
+      </div>
+    </header>
+
+    <section class="hero-strip" aria-label="Quick flow">
+      <button class="mode-tile active" data-mode="now" data-help-key="modeNow">
+        <span>Now</span>
+        <strong>Tell agent</strong>
+      </button>
+      <button class="mode-tile" data-mode="later" data-help-key="modeLater">
+        <span>Later</span>
+        <strong>Remind me</strong>
+      </button>
+      <button class="mode-tile" data-mode="daily" data-help-key="modeDaily">
+        <span>Repeat</span>
+        <strong>Every 2h</strong>
+      </button>
+      <button class="mode-tile" data-mode="advanced" data-help-key="modeAdvanced">
+        <span>Advanced</span>
+        <strong>Fine tune</strong>
+      </button>
+    </section>
+
+    <section class="workspace">
+      <aside class="sessions-panel">
+        <div class="panel-head">
+          <h2>Chats</h2>
+          <span id="sessionCount">0</span>
+        </div>
+        <input id="sessionSearch" class="search" type="search" placeholder="Find chat" data-help-key="sessionSearch">
+        <div id="sessionList" class="session-list" data-help-key="sessionList"></div>
+      </aside>
+
+      <section class="composer">
+        <div class="panel-head">
+          <h2 id="composerTitle">Tell agent now</h2>
+          <span id="selectedBadge" data-help-key="selectedBadge">No chat</span>
+        </div>
+
+        <div class="preset-row" id="presetRow"></div>
+
+        <label class="field-label" for="messageInput" data-help-key="messageLabel">Message</label>
+        <textarea id="messageInput" rows="8" spellcheck="true" data-help-key="message"></textarea>
+
+        <div class="flow-panel">
+          <section class="flow-section" data-help-key="schedulePresets">
+            <div class="flow-head">
+              <h3>When</h3>
+              <span id="scheduleSummary">Now</span>
+            </div>
+            <div class="choice-grid" id="schedulePresetRow">
+              <button class="choice-card active" type="button" data-schedule-preset="now" data-help-key="schedulePreset">
+                <strong>Now</strong>
+                <span>Run once immediately</span>
+              </button>
+              <button class="choice-card" type="button" data-schedule-preset="in30" data-help-key="schedulePreset">
+                <strong>In 30 min</strong>
+                <span>One follow-up</span>
+              </button>
+              <button class="choice-card" type="button" data-schedule-preset="every2h" data-help-key="schedulePreset">
+                <strong>Every 2h</strong>
+                <span>Repeating sweep</span>
+              </button>
+              <button class="choice-card" type="button" data-schedule-preset="morning" data-help-key="schedulePreset">
+                <strong>Morning</strong>
+                <span>Daily at 09:00</span>
+              </button>
+              <button class="choice-card" type="button" data-schedule-preset="weekdays" data-help-key="schedulePreset">
+                <strong>Weekdays</strong>
+                <span>Mon-Fri at 09:00</span>
+              </button>
+              <button class="choice-card" type="button" data-schedule-preset="hourly" data-help-key="schedulePreset">
+                <strong>Hourly</strong>
+                <span>Every hour</span>
+              </button>
+            </div>
+          </section>
+
+          <section class="flow-section" data-help-key="deliveryPresets">
+            <div class="flow-head">
+              <h3>Answer</h3>
+              <span id="deliverySummary">Message me</span>
+            </div>
+            <div class="choice-grid">
+              <button class="choice-card active" type="button" data-delivery-mode="notify" data-help-key="deliveryPreset">
+                <strong>Message me</strong>
+                <span>Send the final answer back to the selected chat</span>
+              </button>
+              <button class="choice-card" type="button" data-delivery-mode="webhook" data-help-key="deliveryPreset">
+                <strong>Webhook</strong>
+                <span>POST the finished payload to a URL</span>
+              </button>
+              <button class="choice-card" type="button" data-delivery-mode="quiet" data-help-key="deliveryPreset">
+                <strong>Quiet run</strong>
+                <span>Run or schedule without fallback delivery</span>
+              </button>
+            </div>
+            <input id="deliveryModeInput" type="hidden" value="notify">
+          </section>
+        </div>
+
+        <details id="advancedBox" class="advanced">
+          <summary data-help-key="advancedSummary">Advanced settings</summary>
+          <div class="simple-grid advanced-schedule" data-help-key="advancedSchedule">
+            <label class="field" data-help-key="when">
+              <span>When</span>
+              <select id="scheduleMode">
+                <option value="now">Now</option>
+                <option value="at">Once later</option>
+                <option value="every">Repeat</option>
+                <option value="cron">Cron</option>
+                <option value="event">System event</option>
+              </select>
+            </label>
+            <label class="field schedule-control" data-schedule="at" data-help-key="runAt">
+              <span>Run at</span>
+              <input id="atInput" type="text" value="+30m">
+            </label>
+            <label class="field schedule-control" data-schedule="every" data-help-key="every">
+              <span>Every</span>
+              <input id="everyInput" type="text" value="2h">
+            </label>
+            <label class="field schedule-control" data-schedule="cron" data-help-key="cron">
+              <span>Cron</span>
+              <input id="cronInput" type="text" value="0 9 * * *">
+            </label>
+            <label class="field schedule-control" data-schedule="cron at" data-help-key="timezone">
+              <span>Timezone</span>
+              <input id="timezoneInput" type="text" value="Europe/Helsinki">
+            </label>
+          </div>
+          <div class="delivery-row advanced-delivery">
+            <label class="toggle" data-help-key="enabled">
+              <input id="enabledToggle" type="checkbox" checked>
+              <span>Enabled</span>
+            </label>
+            <label class="toggle" data-help-key="deliver">
+              <input id="deliverToggle" type="checkbox" checked>
+              <span>Send answer back</span>
+            </label>
+            <label class="toggle" data-help-key="expectFinal">
+              <input id="expectFinalToggle" type="checkbox" checked>
+              <span>Wait for answer</span>
+            </label>
+            <label class="toggle" data-help-key="lightContext">
+              <input id="lightContextToggle" type="checkbox">
+              <span>Light context</span>
+            </label>
+            <label class="toggle schedule-control" data-schedule="at" data-help-key="deleteAfterRun">
+              <input id="deleteAfterRunToggle" type="checkbox" checked>
+              <span>Delete after run</span>
+            </label>
+            <label class="toggle schedule-control" data-schedule="cron" data-help-key="exactTiming">
+              <input id="exactTimingToggle" type="checkbox">
+              <span>Exact cron time</span>
+            </label>
+            <label class="toggle" data-help-key="bestEffortDelivery">
+              <input id="bestEffortDeliveryToggle" type="checkbox">
+              <span>Best-effort delivery</span>
+            </label>
+          </div>
+          <section class="workflow-box" data-help-key="workflowState">
+            <div class="flow-head">
+              <h3>Step plan controller</h3>
+              <span id="workflowSummary">Off</span>
+            </div>
+            <label class="toggle" data-help-key="workflowStepPlan">
+              <input id="workflowStepPlanToggle" type="checkbox">
+              <span>Step plan controller</span>
+            </label>
+            <div class="advanced-grid workflow-grid">
+              <label class="field" data-help-key="workflowName">
+                <span>Workflow</span>
+                <input id="workflowNameInput" type="text" placeholder="PR review, long build, research task">
+              </label>
+              <div class="field wide-field" data-help-key="workflowSteps">
+                <span>Step plan</span>
+                <div class="step-grid" id="workflowStepGrid" role="table" aria-label="Step plan">
+                  <div class="step-row step-head" role="row">
+                    <span>#</span>
+                    <span>Step name</span>
+                    <span>Next action</span>
+                    <span>Done when</span>
+                    <span>State note</span>
+                    <span>Actions</span>
+                  </div>
+                  <div id="workflowRows" class="step-rows"></div>
+                </div>
+                <div class="step-toolbar">
+                  <button id="addStepBtn" class="secondary-button" type="button" data-help-key="workflowAddStep">Add row</button>
+                  <button id="copyLastStepBtn" class="secondary-button" type="button" data-help-key="workflowCopyPrevious">Add from previous</button>
+                  <button id="clearEmptyStepsBtn" class="secondary-button" type="button" data-help-key="workflowClearEmpty">Clear empty rows</button>
+                </div>
+              </div>
+            </div>
+          </section>
+          <div class="advanced-grid">
+            <label class="field" data-help-key="jobName">
+              <span>Job name</span>
+              <input id="jobNameInput" type="text" placeholder="Auto from selected chat">
+            </label>
+            <label class="field" data-help-key="description">
+              <span>Description</span>
+              <input id="descriptionInput" type="text" placeholder="Optional context for this job">
+            </label>
+            <label class="field" data-help-key="sessionKey">
+              <span>Session key override</span>
+              <input id="sessionKeyInput" type="text">
+            </label>
+            <label class="field" data-help-key="sessionTarget">
+              <span>Cron session</span>
+              <select id="sessionTargetInput">
+                <option value="isolated">isolated</option>
+                <option value="main">main</option>
+              </select>
+            </label>
+            <label class="field" data-help-key="replyChannel">
+              <span>Reply channel</span>
+              <input id="replyChannelInput" type="text" value="telegram">
+            </label>
+            <label class="field" data-help-key="replyTo">
+              <span>Reply to</span>
+              <input id="replyToInput" type="text">
+            </label>
+            <label class="field delivery-control" data-delivery="webhook" data-help-key="webhook">
+              <span>Webhook URL</span>
+              <input id="webhookInput" type="url" placeholder="https://example.com/openclaw">
+            </label>
+            <label class="field" data-help-key="agent">
+              <span>Agent ID</span>
+              <input id="agentInput" type="text" placeholder="main or ops">
+            </label>
+            <label class="field" data-help-key="model">
+              <span>Model override</span>
+              <input id="modelInput" type="text" placeholder="openai/gpt-5.5">
+            </label>
+            <label class="field" data-help-key="thinking">
+              <span>Thinking</span>
+              <select id="thinkingInput">
+                <option value="xhigh">xhigh</option>
+                <option value="high">high</option>
+                <option value="medium">medium</option>
+                <option value="low">low</option>
+                <option value="minimal">minimal</option>
+                <option value="off">off</option>
+              </select>
+            </label>
+            <label class="field" data-help-key="timeout">
+              <span>Timeout seconds</span>
+              <input id="timeoutInput" type="number" min="10" step="10" value="600">
+            </label>
+            <label class="field" data-help-key="tools">
+              <span>Tools</span>
+              <input id="toolsInput" type="text" placeholder="exec,read,write">
+            </label>
+            <label class="field schedule-control" data-schedule="cron" data-help-key="stagger">
+              <span>Stagger</span>
+              <input id="staggerInput" type="text" placeholder="30s or 5m">
+            </label>
+            <label class="field" data-help-key="wake">
+              <span>Wake</span>
+              <select id="wakeInput">
+                <option value="">Default</option>
+                <option value="now">now</option>
+                <option value="next-heartbeat">next-heartbeat</option>
+              </select>
+            </label>
+            <label class="field" data-help-key="jobMode">
+              <span>Job mode</span>
+              <select id="jobModeInput">
+                <option value="agent">Agent message</option>
+                <option value="system-event">System event</option>
+              </select>
+            </label>
+          </div>
+        </details>
+
+        <section id="safetyPanel" class="safety-panel ok" data-help-key="safetyPanel">
+          <div class="safety-head">
+            <h3>Safety check</h3>
+            <span id="safetySummary">Waiting for message</span>
+          </div>
+          <div id="safetyList" class="safety-list">
+            <div class="safety-item notice">Pick a chat and write a message first.</div>
+          </div>
+        </section>
+
+        <div class="command-preview" id="commandPreview" data-help-key="commandPreview">Select a chat and write a message.</div>
+
+        <div class="action-row">
+          <button id="primaryAction" class="primary-button" disabled data-help-key="primaryAction">Run now</button>
+          <button id="previewBtn" class="secondary-button" disabled data-help-key="previewAction">Preview command</button>
+        </div>
+
+        <pre id="resultBox" class="result-box" hidden data-help-key="result"></pre>
+      </section>
+
+      <aside class="side-panel">
+        <section>
+          <div class="panel-head">
+            <h2>Jobs</h2>
+            <span id="jobCount">0</span>
+          </div>
+          <div id="jobsList" class="jobs-list" data-help-key="jobs"></div>
+        </section>
+        <section>
+          <div class="panel-head">
+            <h2>Backend</h2>
+            <span id="backendBadge">Local</span>
+          </div>
+          <div id="checkList" class="checks" data-help-key="backend"></div>
+        </section>
+      </aside>
+    </section>
+  </main>
+  <div id="helpBubble" class="help-bubble" role="tooltip" hidden>
+    <div class="help-head">
+      <div id="helpBubbleTitle" class="help-title"></div>
+      <button id="helpCloseBtn" class="help-close" type="button" aria-label="Close label">x</button>
+    </div>
+    <div id="helpBubbleText" class="help-text"></div>
+  </div>
+  <script src="./app.js?v=0.4.7" type="module"></script>
+</body>
+</html>

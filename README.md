@@ -1,6 +1,55 @@
-# OpenClaw Tunnel Click-Start
+# OpenClaw Click-Start
 
-Small Android localhost tunnel plus a Windows launcher for reaching a PC-hosted OpenClaw Gateway from a phone over a private Meshnet/Tailnet address.
+Small Android localhost tunnel, Windows Gateway launcher, and Windows automation desk for OpenClaw.
+
+## OpenClaw Automator
+
+`OpenClaw Automator` is a Windows 10/11 local app for sending and scheduling messages into OpenClaw chat sessions.
+
+It is built for the case where users have Telegram, the Gateway web chat at `http://localhost:18789/`, heartbeat sessions, and sessions that were created by OpenClaw rather than manually opened by the user.
+
+Double-click:
+
+```text
+Start-OpenClaw-Automator.cmd
+```
+
+The app opens:
+
+```text
+http://127.0.0.1:18890/
+```
+
+What it does:
+
+- discovers OpenClaw sessions and cron jobs
+- picks a likely Telegram direct chat automatically
+- sends a message into a chosen session with `openclaw agent --session-key`
+- optionally delivers the agent response back to Telegram
+- creates scheduled jobs with `openclaw cron add` using cron-style schedule and delivery presets
+- avoids manual session-id entry in the normal flow; selected chat cards fill routing automatically
+- supports advanced settings for job name/description, enabled state, session key, reply target, agent/model override, thinking level, timeout, tools, webhook delivery, stagger/exact cron timing, wake mode, and system-event flows
+- shows an always-visible safety check when context, cron session, and reply destination do not line up
+- can use a spreadsheet-style step-plan controller that advances one repeating cron only after the agent reports the active step complete
+- shows delayed contextual labels after a 5-second hover, with Simple and Detailed modes
+- links known OpenClaw flags inside Detailed labels to the relevant official docs pages
+- keeps an opened label visible while you move to its docs links, until you click `x`, click elsewhere, or press Escape
+
+Build a distributable zip:
+
+```powershell
+.\scripts\Build-OpenClawAutomator.ps1
+```
+
+The package is written to:
+
+```text
+dist\OpenClawAutomator-win.zip
+```
+
+## OpenClaw Tunnel
+
+The Android tunnel and PC Gateway launcher help reach a PC-hosted OpenClaw Gateway from a phone over a private Meshnet/Tailnet address.
 
 The Android app forwards:
 
@@ -13,6 +62,9 @@ The Windows launcher starts OpenClaw Gateway in the foreground on port `18789` a
 ## Layout
 
 - `android/` - Android source for the OpenClaw Tunnel APK.
+- `automator/` - Windows OpenClaw Automator backend and browser UI.
+- `Start-OpenClaw-Automator.cmd` - double-click Windows Automator launcher.
+- `scripts/Build-OpenClawAutomator.ps1` - distributable Automator zip build script.
 - `scripts/Build-OpenClawTunnel.ps1` - local debug APK build script using the Android SDK command-line tools.
 - `Start-OpenClaw-Agent.cmd` - double-click Windows launcher.
 - `Start-OpenClaw-Agent.ps1` - elevated launcher implementation.
