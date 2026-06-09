@@ -16,6 +16,7 @@ const els = {
   statusLine: $("statusLine"),
   helpSimpleBtn: $("helpSimpleBtn"),
   helpDetailedBtn: $("helpDetailedBtn"),
+  cronLink: $("cronLink"),
   helpBubble: $("helpBubble"),
   helpCloseBtn: $("helpCloseBtn"),
   helpBubbleTitle: $("helpBubbleTitle"),
@@ -29,6 +30,9 @@ const els = {
   composerTitle: $("composerTitle"),
   presetRow: $("presetRow"),
   messageInput: $("messageInput"),
+  scheduleSummary: $("scheduleSummary"),
+  deliverySummary: $("deliverySummary"),
+  deliveryModeInput: $("deliveryModeInput"),
   scheduleMode: $("scheduleMode"),
   atInput: $("atInput"),
   everyInput: $("everyInput"),
@@ -45,6 +49,7 @@ const els = {
   toolsInput: $("toolsInput"),
   wakeInput: $("wakeInput"),
   jobModeInput: $("jobModeInput"),
+  sessionTargetInput: $("sessionTargetInput"),
   commandPreview: $("commandPreview"),
   primaryAction: $("primaryAction"),
   previewBtn: $("previewBtn"),
@@ -53,6 +58,26 @@ const els = {
   jobCount: $("jobCount"),
   checkList: $("checkList"),
   backendBadge: $("backendBadge"),
+};
+
+const schedulePresets = {
+  now: { mode: "now", label: "Now", action: "Run once immediately" },
+  in30: { mode: "at", at: "+30m", label: "In 30 min", action: "Create one reminder" },
+  hourly: { mode: "every", every: "1h", label: "Hourly", action: "Repeat every hour" },
+  every2h: { mode: "every", every: "2h", label: "Every 2h", action: "Repeat every two hours" },
+  morning: { mode: "cron", cron: "0 9 * * *", label: "Morning", action: "Run daily at 09:00" },
+  weekdays: { mode: "cron", cron: "0 9 * * 1-5", label: "Weekdays", action: "Run weekdays at 09:00" },
+};
+
+const deliveryPresets = {
+  notify: {
+    label: "Message me",
+    summary: "Answer returns to selected chat",
+  },
+  quiet: {
+    label: "Quiet run",
+    summary: "No fallback delivery",
+  },
 };
 
 const helpCatalog = {
@@ -76,6 +101,11 @@ const helpCatalog = {
     simple: "Open the main OpenClaw page.",
     detailed: "Opens the configured Gateway web UI, usually http://127.0.0.1:18789/. This does not run a command; it just opens the OpenClaw control page in a new tab.",
   },
+  gatewayCron: {
+    title: "Open Cron",
+    simple: "Open OpenClaw's full cron page.",
+    detailed: "Opens the Gateway cron screen at /cron. Use it when you want OpenClaw's native editor; this app keeps the common cron flow simpler and avoids manual session id entry.",
+  },
   modeNow: {
     title: "Tell agent",
     simple: "Send the message now.",
@@ -87,14 +117,14 @@ const helpCatalog = {
     detailed: "Switches to a one-shot cron job using --at. Relative times like +30m are passed to openclaw cron add and can be deleted after a successful run.",
   },
   modeDaily: {
-    title: "Check in",
-    simple: "Ask the agent on a daily schedule.",
-    detailed: "Switches to cron mode with a default 0 9 * * * schedule in your timezone. The backend creates a persistent OpenClaw cron job.",
+    title: "Repeat",
+    simple: "Ask the agent again and again.",
+    detailed: "Switches to the Every 2h preset. The backend creates an isolated OpenClaw cron agent-turn job with --every 2h unless you choose a different schedule.",
   },
   modeAdvanced: {
-    title: "Build flow",
+    title: "Fine tune",
     simple: "Show the extra controls.",
-    detailed: "Opens the full command surface: session key, reply routing, model thinking, timeout, tool allow-list, wake mode, and system-event mode. It also switches help labels to Detailed.",
+    detailed: "Opens the full command surface: schedule fields, session key override, reply routing, cron session target, model thinking, timeout, tool allow-list, wake mode, and system-event mode. It also switches help labels to Detailed.",
   },
   sessionSearch: {
     title: "Find chat",
@@ -136,6 +166,16 @@ const helpCatalog = {
     simple: "Choose now, later, repeating, or system event.",
     detailed: "Now calls openclaw agent. Once later, Repeat, and Cron call openclaw cron add. System event calls openclaw system event.",
   },
+  schedulePresets: {
+    title: "When",
+    simple: "Pick when this should run.",
+    detailed: "These buttons fill the underlying OpenClaw cron controls for you. They set --at, --every, or --cron without requiring you to type schedule syntax.",
+  },
+  schedulePreset: {
+    title: "Schedule choice",
+    simple: "Use this timing.",
+    detailed: "This is a safe preset over the Advanced schedule fields. You can still open Advanced to inspect or edit the exact --at, --every, or --cron value.",
+  },
   runAt: {
     title: "Run at",
     simple: "Pick when it should happen one time.",
@@ -159,7 +199,17 @@ const helpCatalog = {
   deliver: {
     title: "Send answer back",
     simple: "Let the answer come back to Telegram.",
-    detailed: "For immediate runs, adds --deliver plus reply-channel and reply-to. For scheduled jobs, adds --announce and delivery target flags when a reply target exists.",
+    detailed: "For immediate runs, adds --deliver plus reply-channel and reply-to. For scheduled jobs, Message me adds --announce and delivery target flags; Quiet run adds --no-deliver.",
+  },
+  deliveryPresets: {
+    title: "Answer",
+    simple: "Choose whether the result should message you.",
+    detailed: "Message me sends the final answer back to the selected chat. Quiet run explicitly uses --no-deliver for cron so isolated jobs do not fall back to announcing unexpectedly.",
+  },
+  deliveryPreset: {
+    title: "Answer choice",
+    simple: "Choose how visible the result should be.",
+    detailed: "Message me maps to --deliver for Ask now and --announce for cron. Quiet run leaves immediate runs local and adds --no-deliver for cron jobs.",
   },
   expectFinal: {
     title: "Wait for answer",
@@ -176,10 +226,20 @@ const helpCatalog = {
     simple: "Extra controls live here.",
     detailed: "These fields map directly to OpenClaw CLI flags. They are for users who want to verify routing, delivery, model effort, timeout, tool access, and wake behavior before execution.",
   },
+  advancedSchedule: {
+    title: "Advanced schedule",
+    simple: "Exact timing fields.",
+    detailed: "These are the exact underlying schedule fields used by the preset buttons. Editing them updates the command preview.",
+  },
   sessionKey: {
-    title: "Session key",
-    simple: "The exact chat address inside OpenClaw.",
-    detailed: "Used as --session-key. Example: agent:main:telegram:direct:8910901726. Changing this can route the prompt to a different stored conversation.",
+    title: "Session key override",
+    simple: "Usually leave this alone.",
+    detailed: "Used as --session-key. The normal path fills it by selecting a chat card, so you should not need to type ids manually. Override only when routing to a session not shown in the list.",
+  },
+  sessionTarget: {
+    title: "Cron session",
+    simple: "Where scheduled agent work runs.",
+    detailed: "Passed as cron --session. isolated is the safe default for agent-turn cron jobs. current reuses the current cron session. main is only valid for system-event jobs.",
   },
   replyChannel: {
     title: "Reply channel",
@@ -446,7 +506,11 @@ function applySession(session) {
   els.sessionKeyInput.value = session?.key || "";
   els.replyChannelInput.value = session?.delivery?.channel || "telegram";
   els.replyToInput.value = session?.delivery?.to || "";
-  els.deliverToggle.checked = Boolean(session?.delivery?.available);
+  if (!session?.delivery?.available && els.deliveryModeInput.value === "notify") {
+    setDeliveryMode("quiet");
+  } else {
+    els.deliverToggle.checked = els.deliveryModeInput.value === "notify";
+  }
   renderSessions();
   updatePreview();
 }
@@ -501,11 +565,74 @@ function renderChecks() {
   els.checkList.innerHTML = rows.join("");
 }
 
+function currentSchedulePresetId() {
+  const mode = els.scheduleMode.value;
+  return Object.entries(schedulePresets).find(([, preset]) => {
+    if (preset.mode !== mode) return false;
+    if (mode === "at") return (preset.at || "") === els.atInput.value.trim();
+    if (mode === "every") return (preset.every || "") === els.everyInput.value.trim();
+    if (mode === "cron") return (preset.cron || "") === els.cronInput.value.trim();
+    return true;
+  })?.[0] || "";
+}
+
+function scheduleSummary() {
+  const preset = schedulePresets[currentSchedulePresetId()];
+  if (preset) return preset.label;
+  const mode = els.scheduleMode.value;
+  if (mode === "at") return `Once: ${els.atInput.value.trim() || "unset"}`;
+  if (mode === "every") return `Every ${els.everyInput.value.trim() || "unset"}`;
+  if (mode === "cron") return `Cron ${els.cronInput.value.trim() || "unset"}`;
+  if (mode === "event") return "System event";
+  return "Now";
+}
+
+function modeForScheduleMode(mode) {
+  if (mode === "at") return "later";
+  if (mode === "every" || mode === "cron") return "daily";
+  if (mode === "event") return "advanced";
+  return "now";
+}
+
+function setActiveModeTile(mode) {
+  state.mode = mode;
+  document.querySelectorAll(".mode-tile").forEach((tile) => {
+    tile.classList.toggle("active", tile.dataset.mode === mode);
+  });
+}
+
+function setSchedulePreset(id) {
+  const preset = schedulePresets[id];
+  if (!preset) return;
+  els.scheduleMode.value = preset.mode;
+  if (preset.at) els.atInput.value = preset.at;
+  if (preset.every) els.everyInput.value = preset.every;
+  if (preset.cron) els.cronInput.value = preset.cron;
+  setActiveModeTile(modeForScheduleMode(preset.mode));
+  updateScheduleControls();
+  updatePreview();
+}
+
+function setDeliveryMode(mode) {
+  const clean = deliveryPresets[mode] ? mode : "notify";
+  els.deliveryModeInput.value = clean;
+  els.deliverToggle.checked = clean === "notify";
+  document.querySelectorAll("[data-delivery-mode]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.deliveryMode === clean);
+  });
+  els.deliverySummary.textContent = deliveryPresets[clean].label;
+  updatePreview();
+}
+
 function updateScheduleControls() {
   const mode = els.scheduleMode.value;
   document.querySelectorAll(".schedule-control").forEach((control) => {
     const modes = (control.dataset.schedule || "").split(/\s+/);
     control.hidden = !modes.includes(mode);
+  });
+  const presetId = currentSchedulePresetId();
+  document.querySelectorAll("[data-schedule-preset]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.schedulePreset === presetId);
   });
   const title = {
     now: "Tell agent now",
@@ -516,27 +643,23 @@ function updateScheduleControls() {
   }[mode] || "Build flow";
   els.composerTitle.textContent = title;
   els.primaryAction.textContent = mode === "now" || mode === "event" ? "Run now" : "Create job";
+  els.scheduleSummary.textContent = scheduleSummary();
 }
 
 function setMode(mode) {
-  state.mode = mode;
-  document.querySelectorAll(".mode-tile").forEach((tile) => {
-    tile.classList.toggle("active", tile.dataset.mode === mode);
-  });
+  setActiveModeTile(mode);
   if (mode === "now") {
-    els.scheduleMode.value = "now";
+    setSchedulePreset("now");
   } else if (mode === "later") {
-    els.scheduleMode.value = "at";
-    els.atInput.value = "+30m";
+    setSchedulePreset("in30");
   } else if (mode === "daily") {
-    els.scheduleMode.value = "cron";
-    els.cronInput.value = "0 9 * * *";
+    setSchedulePreset("every2h");
   } else if (mode === "advanced") {
     $("advancedBox").open = true;
     setHelpMode("detailed");
+    updateScheduleControls();
+    updatePreview();
   }
-  updateScheduleControls();
-  updatePreview();
 }
 
 function applyPreset(preset) {
@@ -555,19 +678,24 @@ function applyPreset(preset) {
   } else {
     els.scheduleMode.value = "now";
   }
+  setActiveModeTile(modeForScheduleMode(els.scheduleMode.value));
   updateScheduleControls();
   updatePreview();
 }
 
 function collectPayload(kindOverride = null) {
   const scheduleMode = els.scheduleMode.value;
+  const deliveryMode = els.deliveryModeInput.value || "notify";
+  const wantsDelivery = deliveryMode === "notify";
   const payload = {
     kind: kindOverride || (scheduleMode === "event" ? "event" : scheduleMode === "now" ? "agent" : "cron"),
     sessionKey: selectedSessionKey(),
     message: els.messageInput.value.trim(),
     text: els.messageInput.value.trim(),
-    deliver: els.deliverToggle.checked,
-    announce: els.deliverToggle.checked,
+    deliveryMode,
+    deliver: wantsDelivery && els.deliverToggle.checked,
+    announce: wantsDelivery && els.deliverToggle.checked,
+    noDeliver: !wantsDelivery,
     expectFinal: els.expectFinalToggle.checked,
     lightContext: els.lightContextToggle.checked,
     replyChannel: els.replyChannelInput.value.trim(),
@@ -585,6 +713,7 @@ function collectPayload(kindOverride = null) {
     tools: els.toolsInput.value.trim(),
     wake: els.wakeInput.value,
     jobMode: els.jobModeInput.value,
+    sessionTarget: els.sessionTargetInput.value,
   };
   return payload;
 }
@@ -660,6 +789,7 @@ async function load() {
   state.sessions = bootstrap.sessions || [];
   state.jobs = bootstrap.jobs || [];
   els.gatewayLink.href = bootstrap.app?.gatewayHttp || "http://127.0.0.1:18789/";
+  els.cronLink.href = `${(bootstrap.app?.gatewayHttp || "http://127.0.0.1:18789/").replace(/\/$/, "")}/cron`;
   els.timezoneInput.value = bootstrap.settings?.defaultTimezone || els.timezoneInput.value;
   els.thinkingInput.value = bootstrap.settings?.defaultThinking || "xhigh";
   els.timeoutInput.value = bootstrap.settings?.defaultTimeoutSeconds || 600;
@@ -674,6 +804,7 @@ async function load() {
   renderPresets();
   renderJobs();
   renderChecks();
+  setDeliveryMode(els.deliveryModeInput.value || "notify");
   applySession(selected);
   updateScheduleControls();
 }
@@ -693,6 +824,14 @@ document.addEventListener("click", (event) => {
   if (presetButton) {
     const preset = (state.bootstrap?.presets || []).find((item) => item.id === presetButton.dataset.preset);
     applyPreset(preset);
+  }
+  const schedulePresetButton = event.target.closest("[data-schedule-preset]");
+  if (schedulePresetButton) {
+    setSchedulePreset(schedulePresetButton.dataset.schedulePreset);
+  }
+  const deliveryPresetButton = event.target.closest("[data-delivery-mode]");
+  if (deliveryPresetButton) {
+    setDeliveryMode(deliveryPresetButton.dataset.deliveryMode);
   }
   const tile = event.target.closest(".mode-tile");
   if (tile) setMode(tile.dataset.mode);
@@ -768,7 +907,15 @@ window.addEventListener("resize", refreshVisibleHelpPosition);
     els.toolsInput,
     els.wakeInput,
     els.jobModeInput,
+    els.sessionTargetInput,
   ].forEach((node) => node.addEventListener(eventName, () => {
+    if (node === els.deliverToggle) {
+      setDeliveryMode(els.deliverToggle.checked ? "notify" : "quiet");
+      return;
+    }
+    if (node === els.scheduleMode) {
+      setActiveModeTile(modeForScheduleMode(els.scheduleMode.value));
+    }
     updateScheduleControls();
     updatePreview();
   }));

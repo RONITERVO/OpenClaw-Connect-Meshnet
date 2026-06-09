@@ -102,6 +102,12 @@ h2 {
   text-transform: uppercase;
 }
 
+h3 {
+  margin: 0;
+  font-size: 13px;
+  text-transform: uppercase;
+}
+
 .brand p,
 .panel-head span,
 .field span,
@@ -323,6 +329,66 @@ textarea {
   color: var(--cyan);
 }
 
+.flow-panel {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.flow-section {
+  border: 1px solid var(--line);
+  background: #12151b;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.flow-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.flow-head span {
+  color: var(--cyan);
+  font-weight: 800;
+  font-size: 12px;
+}
+
+.choice-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.choice-grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.choice-card {
+  display: grid;
+  gap: 6px;
+  min-height: 74px;
+  border: 1px solid var(--line);
+  background: #0f1117;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 12px;
+  text-align: left;
+}
+
+.choice-card span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.choice-card.active {
+  border-color: var(--cyan);
+  background: #11252a;
+}
+
 .simple-grid,
 .advanced-grid {
   display: grid;
@@ -370,6 +436,14 @@ textarea {
 .advanced summary {
   color: var(--cyan);
   cursor: pointer;
+}
+
+.advanced-schedule {
+  margin-top: 12px;
+}
+
+.advanced-delivery {
+  margin-top: 12px;
 }
 
 .command-preview {
@@ -561,6 +635,7 @@ body[data-help-mode="detailed"] .help-title {
   }
 
   .hero-strip,
+  .choice-grid,
   .simple-grid,
   .advanced-grid {
     grid-template-columns: 1fr 1fr;

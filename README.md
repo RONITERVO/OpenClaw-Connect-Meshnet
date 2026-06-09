@@ -26,7 +26,8 @@ What it does:
 - picks a likely Telegram direct chat automatically
 - sends a message into a chosen session with `openclaw agent --session-key`
 - optionally delivers the agent response back to Telegram
-- creates scheduled jobs with `openclaw cron add`
+- creates scheduled jobs with `openclaw cron add` using cron-style schedule and delivery presets
+- avoids manual session-id entry in the normal flow; selected chat cards fill routing automatically
 - supports advanced settings for session key, reply target, thinking level, timeout, tools, wake mode, and system-event flows
 - shows delayed contextual labels after a 5-second hover, with Simple and Detailed modes
 - links known OpenClaw flags inside Detailed labels to the relevant official docs pages

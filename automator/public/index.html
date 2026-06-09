@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OpenClaw Automator</title>
-  <link rel="stylesheet" href="./styles.css?v=0.3.2">
+  <link rel="stylesheet" href="./styles.css?v=0.4.0">
 </head>
 <body>
   <main class="shell">
@@ -23,6 +23,7 @@
         </div>
         <button id="refreshBtn" class="icon-button" title="Refresh state" data-help-key="refresh">Refresh</button>
         <a id="gatewayLink" class="ghost-button" href="http://127.0.0.1:18789/" target="_blank" rel="noreferrer" data-help-key="gateway">Open Gateway</a>
+        <a id="cronLink" class="ghost-button" href="http://127.0.0.1:18789/cron" target="_blank" rel="noreferrer" data-help-key="gatewayCron">Open Cron</a>
       </div>
     </header>
 
@@ -36,12 +37,12 @@
         <strong>Remind me</strong>
       </button>
       <button class="mode-tile" data-mode="daily" data-help-key="modeDaily">
-        <span>Daily</span>
-        <strong>Check in</strong>
+        <span>Repeat</span>
+        <strong>Every 2h</strong>
       </button>
       <button class="mode-tile" data-mode="advanced" data-help-key="modeAdvanced">
         <span>Advanced</span>
-        <strong>Build flow</strong>
+        <strong>Fine tune</strong>
       </button>
     </section>
 
@@ -66,56 +67,115 @@
         <label class="field-label" for="messageInput" data-help-key="messageLabel">Message</label>
         <textarea id="messageInput" rows="8" spellcheck="true" data-help-key="message"></textarea>
 
-        <div class="simple-grid">
-          <label class="field" data-help-key="when">
-            <span>When</span>
-            <select id="scheduleMode">
-              <option value="now">Now</option>
-              <option value="at">Once later</option>
-              <option value="every">Repeat</option>
-              <option value="cron">Cron</option>
-              <option value="event">System event</option>
-            </select>
-          </label>
-          <label class="field schedule-control" data-schedule="at" data-help-key="runAt">
-            <span>Run at</span>
-            <input id="atInput" type="text" value="+30m">
-          </label>
-          <label class="field schedule-control" data-schedule="every" data-help-key="every">
-            <span>Every</span>
-            <input id="everyInput" type="text" value="2h">
-          </label>
-          <label class="field schedule-control" data-schedule="cron" data-help-key="cron">
-            <span>Cron</span>
-            <input id="cronInput" type="text" value="0 9 * * *">
-          </label>
-          <label class="field schedule-control" data-schedule="cron at" data-help-key="timezone">
-            <span>Timezone</span>
-            <input id="timezoneInput" type="text" value="Europe/Helsinki">
-          </label>
-        </div>
+        <div class="flow-panel">
+          <section class="flow-section" data-help-key="schedulePresets">
+            <div class="flow-head">
+              <h3>When</h3>
+              <span id="scheduleSummary">Now</span>
+            </div>
+            <div class="choice-grid" id="schedulePresetRow">
+              <button class="choice-card active" type="button" data-schedule-preset="now" data-help-key="schedulePreset">
+                <strong>Now</strong>
+                <span>Run once immediately</span>
+              </button>
+              <button class="choice-card" type="button" data-schedule-preset="in30" data-help-key="schedulePreset">
+                <strong>In 30 min</strong>
+                <span>One follow-up</span>
+              </button>
+              <button class="choice-card" type="button" data-schedule-preset="every2h" data-help-key="schedulePreset">
+                <strong>Every 2h</strong>
+                <span>Repeating sweep</span>
+              </button>
+              <button class="choice-card" type="button" data-schedule-preset="morning" data-help-key="schedulePreset">
+                <strong>Morning</strong>
+                <span>Daily at 09:00</span>
+              </button>
+              <button class="choice-card" type="button" data-schedule-preset="weekdays" data-help-key="schedulePreset">
+                <strong>Weekdays</strong>
+                <span>Mon-Fri at 09:00</span>
+              </button>
+              <button class="choice-card" type="button" data-schedule-preset="hourly" data-help-key="schedulePreset">
+                <strong>Hourly</strong>
+                <span>Every hour</span>
+              </button>
+            </div>
+          </section>
 
-        <div class="delivery-row">
-          <label class="toggle" data-help-key="deliver">
-            <input id="deliverToggle" type="checkbox" checked>
-            <span>Send answer back</span>
-          </label>
-          <label class="toggle" data-help-key="expectFinal">
-            <input id="expectFinalToggle" type="checkbox" checked>
-            <span>Wait for answer</span>
-          </label>
-          <label class="toggle" data-help-key="lightContext">
-            <input id="lightContextToggle" type="checkbox">
-            <span>Light context</span>
-          </label>
+          <section class="flow-section" data-help-key="deliveryPresets">
+            <div class="flow-head">
+              <h3>Answer</h3>
+              <span id="deliverySummary">Message me</span>
+            </div>
+            <div class="choice-grid two">
+              <button class="choice-card active" type="button" data-delivery-mode="notify" data-help-key="deliveryPreset">
+                <strong>Message me</strong>
+                <span>Send the final answer back to the selected chat</span>
+              </button>
+              <button class="choice-card" type="button" data-delivery-mode="quiet" data-help-key="deliveryPreset">
+                <strong>Quiet run</strong>
+                <span>Run or schedule without fallback delivery</span>
+              </button>
+            </div>
+            <input id="deliveryModeInput" type="hidden" value="notify">
+          </section>
         </div>
 
         <details id="advancedBox" class="advanced">
           <summary data-help-key="advancedSummary">Advanced settings</summary>
+          <div class="simple-grid advanced-schedule" data-help-key="advancedSchedule">
+            <label class="field" data-help-key="when">
+              <span>When</span>
+              <select id="scheduleMode">
+                <option value="now">Now</option>
+                <option value="at">Once later</option>
+                <option value="every">Repeat</option>
+                <option value="cron">Cron</option>
+                <option value="event">System event</option>
+              </select>
+            </label>
+            <label class="field schedule-control" data-schedule="at" data-help-key="runAt">
+              <span>Run at</span>
+              <input id="atInput" type="text" value="+30m">
+            </label>
+            <label class="field schedule-control" data-schedule="every" data-help-key="every">
+              <span>Every</span>
+              <input id="everyInput" type="text" value="2h">
+            </label>
+            <label class="field schedule-control" data-schedule="cron" data-help-key="cron">
+              <span>Cron</span>
+              <input id="cronInput" type="text" value="0 9 * * *">
+            </label>
+            <label class="field schedule-control" data-schedule="cron at" data-help-key="timezone">
+              <span>Timezone</span>
+              <input id="timezoneInput" type="text" value="Europe/Helsinki">
+            </label>
+          </div>
+          <div class="delivery-row advanced-delivery">
+            <label class="toggle" data-help-key="deliver">
+              <input id="deliverToggle" type="checkbox" checked>
+              <span>Send answer back</span>
+            </label>
+            <label class="toggle" data-help-key="expectFinal">
+              <input id="expectFinalToggle" type="checkbox" checked>
+              <span>Wait for answer</span>
+            </label>
+            <label class="toggle" data-help-key="lightContext">
+              <input id="lightContextToggle" type="checkbox">
+              <span>Light context</span>
+            </label>
+          </div>
           <div class="advanced-grid">
             <label class="field" data-help-key="sessionKey">
-              <span>Session key</span>
+              <span>Session key override</span>
               <input id="sessionKeyInput" type="text">
+            </label>
+            <label class="field" data-help-key="sessionTarget">
+              <span>Cron session</span>
+              <select id="sessionTargetInput">
+                <option value="isolated">isolated</option>
+                <option value="current">current</option>
+                <option value="main">main</option>
+              </select>
             </label>
             <label class="field" data-help-key="replyChannel">
               <span>Reply channel</span>
@@ -197,6 +257,6 @@
     </div>
     <div id="helpBubbleText" class="help-text"></div>
   </div>
-  <script src="./app.js?v=0.3.2" type="module"></script>
+  <script src="./app.js?v=0.4.0" type="module"></script>
 </body>
 </html>

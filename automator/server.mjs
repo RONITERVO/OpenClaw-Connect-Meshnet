@@ -16,7 +16,7 @@ const auditPath = join(stateDir, "automation-log.jsonl");
 const defaultGatewayHttp = process.env.OPENCLAW_AUTOMATOR_GATEWAY_HTTP || "http://127.0.0.1:18789";
 const openclawCommand = process.env.OPENCLAW_BIN || (process.platform === "win32" ? "openclaw.cmd" : "openclaw");
 const openclawMjs = process.env.APPDATA ? join(process.env.APPDATA, "npm", "node_modules", "openclaw", "openclaw.mjs") : "";
-const appVersion = "0.3.2";
+const appVersion = "0.4.0";
 
 const contentTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -372,7 +372,10 @@ function cronArgs(body, settings) {
   const name = requireText(body.name || "OpenClaw automation", "Name", 120);
   const sessionKey = requireText(body.sessionKey, "Session key", 300);
   const mode = String(body.scheduleMode || "every");
-  const args = ["cron", "add", "--name", name, "--session-key", sessionKey, "--json"];
+  const jobMode = String(body.jobMode || "agent");
+  const requestedSessionTarget = optionalText(body.sessionTarget, 80);
+  const sessionTarget = requestedSessionTarget || (jobMode === "system-event" ? "main" : "isolated");
+  const args = ["cron", "add", "--name", name, "--session-key", sessionKey, "--session", sessionTarget, "--json"];
 
   if (mode === "cron") {
     args.push("--cron", requireText(body.cron, "Cron expression", 80));
@@ -387,7 +390,6 @@ function cronArgs(body, settings) {
     args.push("--every", requireText(body.every || "1h", "Interval", 40));
   }
 
-  const jobMode = String(body.jobMode || "agent");
   if (jobMode === "system-event") {
     args.push("--system-event", requireText(body.message, "System event"));
   } else {
@@ -396,14 +398,18 @@ function cronArgs(body, settings) {
     if (thinking) args.push("--thinking", thinking);
   }
 
-  if (body.expectFinal !== false) args.push("--expect-final");
-  if (body.announce || body.deliver) args.push("--announce");
-  if (body.lightContext) args.push("--light-context");
+  const deliveryMode = optionalText(body.deliveryMode, 40) || (body.announce || body.deliver ? "notify" : "quiet");
+  if (jobMode !== "system-event" && body.expectFinal !== false) args.push("--expect-final");
+  if (jobMode !== "system-event") {
+    if (deliveryMode === "notify") args.push("--announce");
+    else args.push("--no-deliver");
+  }
+  if (jobMode !== "system-event" && body.lightContext) args.push("--light-context");
   const timeoutSeconds = Number(body.timeoutSeconds || settings.defaultTimeoutSeconds);
-  if (Number.isFinite(timeoutSeconds) && timeoutSeconds > 0) args.push("--timeout-seconds", String(Math.round(timeoutSeconds)));
+  if (jobMode !== "system-event" && Number.isFinite(timeoutSeconds) && timeoutSeconds > 0) args.push("--timeout-seconds", String(Math.round(timeoutSeconds)));
   const channel = optionalText(body.channel || settings.replyChannel, 80);
   const to = optionalText(body.to || body.replyTo, 300);
-  const wantsDelivery = Boolean(body.announce || body.deliver || to);
+  const wantsDelivery = jobMode !== "system-event" && deliveryMode === "notify";
   if (wantsDelivery && channel) args.push("--channel", channel);
   if (wantsDelivery && to) args.push("--to", to);
   const account = optionalText(body.account || body.replyAccount, 120);
