@@ -18,7 +18,7 @@ const auditPath = join(stateDir, "automation-log.jsonl");
 const defaultGatewayHttp = process.env.OPENCLAW_AUTOMATOR_GATEWAY_HTTP || "http://127.0.0.1:18789";
 const openclawCommand = process.env.OPENCLAW_BIN || (process.platform === "win32" ? "openclaw.cmd" : "openclaw");
 const openclawMjs = process.env.APPDATA ? join(process.env.APPDATA, "npm", "node_modules", "openclaw", "openclaw.mjs") : "";
-const appVersion = "0.4.12";
+const appVersion = "0.4.13";
 
 const contentTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -352,6 +352,284 @@ function workflowStepMessage(workflow) {
     `If FAILED, call: ${workflowAdvanceCommand(workflow, step, "failed")}`,
   );
   return lines.join("\n");
+}
+
+function titleFromHint(value) {
+  const text = optionalText(value, 180).replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  const cleaned = text.replace(/^(please|pls|can you|could you|make|create|set up|setup)\s+/i, "").trim() || text;
+  return cleaned.slice(0, 90).replace(/[.,;:!?]+$/g, "");
+}
+
+function objectValue(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function normalizeWorkflowIntakeSchedule(value) {
+  const mode = String(value || "").trim().toLowerCase();
+  if (mode === "repeat") return "every";
+  if (mode === "every" || mode === "cron") return mode;
+  return "";
+}
+
+function normalizeWorkflowIntakeDelivery(value) {
+  const mode = String(value || "").trim().toLowerCase();
+  if (mode === "message" || mode === "message-me" || mode === "telegram") return "notify";
+  if (mode === "notify" || mode === "webhook" || mode === "quiet") return mode;
+  return "notify";
+}
+
+function normalizeQuestionList(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => optionalText(item, 500))
+    .filter(Boolean)
+    .slice(0, 6);
+}
+
+function workflowIntakeQuestions(missing) {
+  const questions = [];
+  const has = (field) => missing.some((item) => item.field === field);
+  if (has("sessionKey")) {
+    questions.push("Which OpenClaw chat/session should this workflow use as context?");
+  }
+  if (has("baseMessage")) {
+    questions.push("What should the agent understand as the overall goal?");
+  }
+  if (has("schedule")) {
+    questions.push("Should this repeat every interval, or use an exact cron schedule?");
+  } else if (has("every")) {
+    questions.push("How often should it repeat? Examples: 30m, 2h, 1d.");
+  } else if (has("cron")) {
+    questions.push("What exact cron expression should run this workflow?");
+  }
+  if (has("steps")) {
+    questions.push("What are the step rows? For each row, give current step, next action, done when, and any state note.");
+  }
+  if (has("replyTo")) {
+    questions.push("Where should the final answer be sent, or should this be a quiet run?");
+  }
+  if (has("webhook")) {
+    questions.push("What webhook URL should receive the final answer?");
+  }
+  return questions;
+}
+
+function workflowIntakeMissingItem(field, detail) {
+  return { field, detail };
+}
+
+function buildWorkflowIntake(body, settings) {
+  const schedule = objectValue(body.schedule);
+  const delivery = objectValue(body.delivery);
+  const workflowBody = objectValue(body.workflow);
+  const plan = objectValue(body.plan);
+  const hint = optionalText(body.hint || body.userHint || body.request || body.originalMessage, 3000);
+  const baseMessage = optionalText(
+    body.baseMessage || body.message || body.prompt || workflowBody.baseMessage || hint,
+    12000,
+  );
+  const name = optionalText(
+    body.name || body.workflowName || workflowBody.name || titleFromHint(hint || baseMessage) || "OpenClaw workflow",
+    120,
+  );
+  const description = optionalText(
+    body.description || (hint ? `Created from natural-language intake: ${hint}` : "Created from OpenClaw Automator workflow intake."),
+    1000,
+  );
+  const session = objectValue(body.session);
+  const sessionKey = optionalText(body.sessionKey || body.contextSessionKey || session.key, 300);
+  const rawEvery = optionalText(body.every || schedule.every, 80);
+  const rawCron = optionalText(body.cron || schedule.cron, 120);
+  let scheduleMode = normalizeWorkflowIntakeSchedule(body.scheduleMode || schedule.mode || schedule.kind);
+  if (!scheduleMode && rawCron) scheduleMode = "cron";
+  if (!scheduleMode && rawEvery) scheduleMode = "every";
+  const deliveryMode = normalizeWorkflowIntakeDelivery(body.deliveryMode || delivery.mode);
+  const replyChannel = optionalText(body.replyChannel || body.channel || delivery.channel || settings.replyChannel, 80);
+  const replyTo = optionalText(body.replyTo || body.to || delivery.to, 300);
+  const webhook = optionalText(body.webhook || delivery.webhook, 1000);
+  const steps = parseWorkflowSteps(body.steps || workflowBody.steps || plan.steps);
+  const explicitQuestions = normalizeQuestionList(body.questions);
+  const confirmed = body.userConfirmed === true || body.confirm === true;
+  const wantsEnabled = body.enabled === true || body.disabled === false || body.enableAfterCreate === true;
+  const allowEnable = body.allowEnable === true || body.activate === true;
+  const enabled = Boolean(confirmed && allowEnable && wantsEnabled);
+  const missing = [];
+  const warnings = [];
+
+  if (!sessionKey) missing.push(workflowIntakeMissingItem("sessionKey", "A workflow needs the OpenClaw session key it will use for context."));
+  if (!baseMessage) missing.push(workflowIntakeMissingItem("baseMessage", "A workflow needs an overall goal/prompt."));
+  if (!scheduleMode) missing.push(workflowIntakeMissingItem("schedule", "The intake tool only creates repeating step-controller jobs, so scheduleMode must be every or cron."));
+  if (scheduleMode === "every" && !rawEvery) missing.push(workflowIntakeMissingItem("every", "Repeat schedules need an interval such as 2h or 1d."));
+  if (scheduleMode === "cron" && !rawCron) missing.push(workflowIntakeMissingItem("cron", "Cron schedules need a cron expression such as 0 9 * * 1-5."));
+  if (!steps.length) missing.push(workflowIntakeMissingItem("steps", "A step-controller cron needs at least one structured step row."));
+  if (deliveryMode === "notify" && !replyTo) missing.push(workflowIntakeMissingItem("replyTo", "Message-me delivery needs a concrete chat target."));
+  if (deliveryMode === "webhook" && !webhook) missing.push(workflowIntakeMissingItem("webhook", "Webhook delivery needs a URL."));
+
+  if (steps.length === 1) warnings.push("Only one step row is configured. This is valid, but a normal OpenClaw cron may be simpler if the workflow does not need controlled advancement.");
+  if (wantsEnabled && (!confirmed || !allowEnable)) warnings.push("Activation was requested but will not happen unless the user has confirmed and allowEnable is true.");
+  if (deliveryMode === "quiet") warnings.push("Quiet delivery means the user must inspect Gateway/session history for results.");
+  if (String(body.sessionTarget || "").toLowerCase() === "main") warnings.push("Main cron sessions can grow the selected chat context. Isolated is safer for repeating workflows.");
+  if (body.lightContext === false) warnings.push("Full context was requested. Light context is the safer default for repeated workflow rows.");
+
+  const draft = {
+    kind: "cron",
+    source: "agent-workflow-intake",
+    intakeHint: hint,
+    name,
+    description,
+    sessionKey,
+    sessionTarget: optionalText(body.sessionTarget, 80) || "isolated",
+    message: baseMessage,
+    baseMessage,
+    scheduleMode: scheduleMode || "every",
+    every: rawEvery,
+    cron: rawCron,
+    timezone: optionalText(body.timezone || schedule.timezone || settings.defaultTimezone, 120),
+    enabled,
+    disabled: !enabled,
+    deliveryMode,
+    deliver: deliveryMode === "notify",
+    announce: deliveryMode === "notify",
+    noDeliver: deliveryMode === "quiet",
+    webhook,
+    bestEffortDelivery: body.bestEffortDelivery !== false,
+    expectFinal: body.expectFinal !== false,
+    lightContext: body.lightContext !== false,
+    replyChannel,
+    replyTo,
+    channel: replyChannel,
+    to: replyTo,
+    agent: optionalText(body.agent, 120),
+    model: optionalText(body.model, 200),
+    thinking: normalizeThinking(body.thinking, settings.defaultThinking),
+    timeoutSeconds: Number(body.timeoutSeconds || settings.defaultTimeoutSeconds),
+    tools: Array.isArray(body.tools) ? body.tools.slice(0, 20).map((item) => optionalText(item, 80)).filter(Boolean) : optionalText(body.tools, 500),
+    stagger: optionalText(body.stagger, 40),
+    wake: optionalText(body.wake, 40),
+    jobMode: "agent",
+    workflow: {
+      stepPlanEnabled: true,
+      name,
+      source: "agent-workflow-intake",
+      intakeHint: hint,
+      steps,
+    },
+  };
+
+  const ready = missing.length === 0 && explicitQuestions.length === 0;
+  let commandPreview = "";
+  let controllerMessagePreview = "";
+  if (ready) {
+    const previewWorkflow = {
+      id: "preview",
+      jobId: "pending",
+      name,
+      baseMessage,
+      currentIndex: 0,
+      steps,
+    };
+    controllerMessagePreview = workflowStepMessage(previewWorkflow);
+    commandPreview = displayCommand(cronArgs({ ...draft, enabled: false, disabled: true, message: controllerMessagePreview }, settings));
+  }
+
+  const questions = explicitQuestions.length ? explicitQuestions : workflowIntakeQuestions(missing);
+  const mode = !ready ? "needs_clarification" : confirmed ? "ready" : "needs_confirmation";
+  return {
+    ok: true,
+    tool: "openclaw-automator.workflow-intake",
+    version: appVersion,
+    mode,
+    ready,
+    userConfirmationRequired: true,
+    missing,
+    questions,
+    warnings,
+    draft,
+    commandPreview,
+    controllerMessagePreview,
+  };
+}
+
+function workflowIntakeSchema() {
+  return {
+    ok: true,
+    tool: "openclaw-automator.workflow-intake",
+    version: appVersion,
+    purpose: "Create OpenClaw Automator step-controller cron jobs from a short user request through a typed, local, preview-first contract.",
+    endpoints: {
+      docs: `http://127.0.0.1:${port}/agent-tools/workflow-intake`,
+      schema: `http://127.0.0.1:${port}/api/agent-tools/workflow-intake/schema`,
+      preview: `http://127.0.0.1:${port}/api/agent-tools/workflow-intake/preview`,
+      create: `http://127.0.0.1:${port}/api/agent-tools/workflow-intake/create`,
+    },
+    requiredForReady: ["sessionKey", "baseMessage or message", "scheduleMode every|cron", "every or cron", "steps[]", "replyTo unless deliveryMode is quiet/webhook"],
+    safety: [
+      "Preview never creates a cron job.",
+      "Create requires userConfirmed: true.",
+      "Jobs created through this tool default to disabled.",
+      "Activation requires enabled: true, userConfirmed: true, and allowEnable: true.",
+      "The cron prompt receives only the active step plus a read-only past-event-log link.",
+    ],
+    request: {
+      hint: "Original human wording, useful for audit and follow-up.",
+      sessionKey: "OpenClaw session key used as context.",
+      name: "Workflow/job name.",
+      baseMessage: "Overall goal shown before the active step.",
+      scheduleMode: "every or cron",
+      every: "Interval such as 2h. Required when scheduleMode is every.",
+      cron: "Cron expression. Required when scheduleMode is cron.",
+      timezone: "IANA timezone. Defaults to Automator settings.",
+      deliveryMode: "notify, quiet, or webhook",
+      replyChannel: "Usually telegram.",
+      replyTo: "Telegram/user target for notify delivery.",
+      steps: [{ name: "Current step", action: "Next action", done: "Done when", note: "State note" }],
+      questions: "Optional follow-up questions. If present, preview returns needs_clarification.",
+      userConfirmed: "Required true on create after the user confirms.",
+      allowEnable: "Required true with enabled:true if the user explicitly asked to activate immediately.",
+    },
+  };
+}
+
+function workflowIntakeDocs() {
+  const base = `http://127.0.0.1:${port}`;
+  return [
+    "OpenClaw Automator workflow intake tool",
+    "",
+    "Use this when a user sends a short Telegram/webchat request and wants a controlled repeating step-plan cron. For ordinary one-shot or simple repeating messages, normal OpenClaw cron is still simpler.",
+    "",
+    "Agent flow:",
+    "1. Read this page once.",
+    `2. POST a draft to ${base}/api/agent-tools/workflow-intake/preview.`,
+    "3. If mode is needs_clarification, ask the returned questions in the same user chat.",
+    "4. If mode is needs_confirmation, summarize schedule, delivery, and steps, then ask the user to confirm.",
+    `5. After the user confirms, POST the same draft to ${base}/api/agent-tools/workflow-intake/create with userConfirmed:true. Only set enabled:true and allowEnable:true if the user explicitly asked for the job to run immediately.`,
+    "",
+    "Important:",
+    "- Do not create a job from a vague hint without previewing and resolving missing fields.",
+    "- Keep future and previous rows out of the cron prompt. Automator stores them and rewrites the cron message when the active row advances.",
+    "- If a step is blocked or fails, the controller keeps the same active row for the next run.",
+    "- Use isolated cron sessions unless the user explicitly wants the main chat timeline to grow.",
+    "",
+    "Minimal preview body:",
+    JSON.stringify({
+      hint: "weekday invoice followup",
+      sessionKey: "agent:main:telegram:direct:123",
+      baseMessage: "Help me keep invoice follow-up moving without flooding the chat.",
+      scheduleMode: "cron",
+      cron: "0 9 * * 1-5",
+      timezone: "Europe/Helsinki",
+      deliveryMode: "notify",
+      replyChannel: "telegram",
+      replyTo: "123",
+      steps: [
+        { name: "Find invoices needing attention", action: "Check the current invoice state and identify only actionable follow-ups.", done: "A concise list of invoices that need user attention exists, or none are due.", note: "Ask the user only if a decision is needed." },
+        { name: "Draft follow-up", action: "Draft the smallest useful follow-up message for each actionable invoice.", done: "The user has a ready-to-send draft or a clear no-action result.", note: "Do not send external messages without explicit approval." },
+      ],
+    }, null, 2),
+    "",
+    `JSON schema: ${base}/api/agent-tools/workflow-intake/schema`,
+  ].join("\n");
 }
 
 function normalizeThinking(value, fallback = "xhigh") {
@@ -981,6 +1259,8 @@ async function createCronWorkflow(body, settings) {
     sessionKey: optionalText(body.sessionKey, 300),
     sessionTarget: optionalText(body.sessionTarget, 80),
     scheduleMode: optionalText(body.scheduleMode, 40),
+    source: optionalText(workflowBody.source || body.source, 120),
+    intakeHint: optionalText(workflowBody.intakeHint || body.intakeHint || body.hint, 3000),
     schedule: {
       mode: optionalText(body.scheduleMode, 40),
       every: optionalText(body.every, 80),
@@ -999,7 +1279,7 @@ async function createCronWorkflow(body, settings) {
   workflowEvent(workflow, "workflow.created", {
     status: "creating",
     title: "Workflow created",
-    detail: `${steps.length} step rows configured. Future rows are intentionally not included in cron prompts.`,
+    detail: `${steps.length} step rows configured. Future rows are intentionally not included in cron prompts.${workflow.intakeHint ? ` Original hint: ${workflow.intakeHint}` : ""}`,
   });
   await writeWorkflow(workflow);
 
@@ -1214,6 +1494,33 @@ async function serveWorkflowLogJson(res, pathname) {
 }
 
 async function handleApi(req, res, pathname) {
+  if (req.method === "GET" && pathname === "/api/agent-tools/workflow-intake/schema") {
+    jsonResponse(res, 200, workflowIntakeSchema());
+    return;
+  }
+  if (req.method === "POST" && pathname === "/api/agent-tools/workflow-intake/preview") {
+    const settings = await readSettings();
+    const body = await readJsonBody(req);
+    jsonResponse(res, 200, buildWorkflowIntake(body, settings));
+    return;
+  }
+  if (req.method === "POST" && pathname === "/api/agent-tools/workflow-intake/create") {
+    const settings = await readSettings();
+    const body = await readJsonBody(req);
+    const intake = buildWorkflowIntake(body, settings);
+    if (intake.mode !== "ready") {
+      jsonResponse(res, 200, intake);
+      return;
+    }
+    const result = await createCronWorkflow(intake.draft, settings);
+    jsonResponse(res, 200, {
+      ...intake,
+      mode: result.ok ? "created" : "create_failed",
+      created: result.ok,
+      result,
+    });
+    return;
+  }
   if (req.method === "GET" && pathname === "/api/health") {
     jsonResponse(res, 200, { ok: true, app: "OpenClaw Automator", version: appVersion, port });
     return;
@@ -1332,6 +1639,14 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url || "/", `http://${req.headers.host || `127.0.0.1:${port}`}`);
     if (url.pathname.startsWith("/api/")) {
       await handleApi(req, res, url.pathname);
+      return;
+    }
+    if (req.method === "GET" && (url.pathname === "/agent-tools/workflow-intake" || url.pathname === "/agent-tools/workflow-intake/")) {
+      textResponse(res, 200, workflowIntakeDocs());
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/agent-tools/workflow-intake.json") {
+      jsonResponse(res, 200, workflowIntakeSchema());
       return;
     }
     if (req.method === "GET" && url.pathname.startsWith("/workflows/") && url.pathname.endsWith("/events.json")) {
