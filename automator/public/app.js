@@ -50,13 +50,8 @@ const els = {
   exactTimingToggle: $("exactTimingToggle"),
   bestEffortDeliveryToggle: $("bestEffortDeliveryToggle"),
   workflowSummary: $("workflowSummary"),
-  workflowAdaptiveToggle: $("workflowAdaptiveToggle"),
   workflowStepPlanToggle: $("workflowStepPlanToggle"),
   workflowNameInput: $("workflowNameInput"),
-  workflowStepInput: $("workflowStepInput"),
-  workflowNextInput: $("workflowNextInput"),
-  workflowDoneInput: $("workflowDoneInput"),
-  workflowNoteInput: $("workflowNoteInput"),
   workflowStepsInput: $("workflowStepsInput"),
   jobNameInput: $("jobNameInput"),
   descriptionInput: $("descriptionInput"),
@@ -254,14 +249,9 @@ const helpCatalog = {
     detailed: "Adds --light-context to cron jobs. Use it for small reminders when you do not want a heavy context bootstrap.",
   },
   workflowState: {
-    title: "Workflow state",
-    simple: "Tell each scheduled run exactly where the work is.",
-    detailed: "Builds a compact state block into scheduled agent prompts. This helps a cron run act like you gave it a specific current-step instruction, instead of making it rediscover progress by reading large workflow-state files or searching old context.",
-  },
-  workflowAdaptive: {
-    title: "Adaptive cron prompt",
-    simple: "Add the workflow fields to scheduled prompts.",
-    detailed: "When enabled, cron/once-later/repeat jobs append a small source-of-truth block to --message. Ask Now and system events stay as the plain message.",
+    title: "Step plan controller",
+    simple: "Let a repeating job move through a list safely.",
+    detailed: "This is the only workflow mode in the app. It creates a controlled repeating cron job whose message is rewritten to the active step after the agent reports completion. Ordinary scheduled prompts stay exactly as typed.",
   },
   workflowStepPlan: {
     title: "Step plan controller",
@@ -271,27 +261,7 @@ const helpCatalog = {
   workflowName: {
     title: "Workflow",
     simple: "Name the larger task.",
-    detailed: "Included in the adaptive state block as the workflow label. Use something stable like PR review, long build, or invoice follow-up.",
-  },
-  workflowStep: {
-    title: "Current step",
-    simple: "What part is happening now.",
-    detailed: "Included as the current step the next scheduled run should trust. This reduces wasted time figuring out the next exact step from broad context.",
-  },
-  workflowNext: {
-    title: "Next action",
-    simple: "What the next run should do first.",
-    detailed: "Included as the first action for the next scheduled run. The prompt tells the agent to do this before broad research unless the action itself requires verification.",
-  },
-  workflowDone: {
-    title: "Done when",
-    simple: "How the agent knows to stop.",
-    detailed: "Included as the completion rule for the workflow. This helps repeated jobs avoid looping after the useful work is finished.",
-  },
-  workflowNote: {
-    title: "State note",
-    simple: "Small facts the next run should trust.",
-    detailed: "Included as concise state. Keep it short: paths, branch names, PR links, last verified result, or the exact blocker. Do not paste large logs or long workflow files here.",
+    detailed: "Stored as the controller workflow label and shown in each active-step prompt. Use something stable like PR review, long build, or invoice follow-up.",
   },
   workflowSteps: {
     title: "Step plan",
@@ -539,13 +509,8 @@ function selectedDeliveryMatchesContext(payload, contextParts) {
 
 function workflowFields() {
   return {
-    enabled: Boolean(els.workflowAdaptiveToggle?.checked),
     stepPlanEnabled: Boolean(els.workflowStepPlanToggle?.checked),
     name: els.workflowNameInput.value.trim(),
-    step: els.workflowStepInput.value.trim(),
-    next: els.workflowNextInput.value.trim(),
-    done: els.workflowDoneInput.value.trim(),
-    note: els.workflowNoteInput.value.trim(),
     stepsText: els.workflowStepsInput.value.trim(),
   };
 }
@@ -566,54 +531,15 @@ function parseWorkflowStepLines(text = "") {
     });
 }
 
-function workflowHasState(fields = workflowFields()) {
-  return Boolean(fields.name || fields.step || fields.next || fields.done || fields.note || fields.stepsText);
-}
-
-function shouldAttachWorkflowState(scheduleMode, jobMode) {
-  if (!els.workflowAdaptiveToggle.checked) return false;
-  if (jobMode === "system-event") return false;
-  if (scheduleMode === "now" || scheduleMode === "event") return false;
-  if (els.workflowStepPlanToggle.checked && parseWorkflowStepLines(els.workflowStepsInput.value).length) return false;
-  return workflowHasState();
-}
-
-function workflowStateBlock(fields = workflowFields()) {
-  const rows = [
-    ["Workflow", fields.name],
-    ["Current step", fields.step],
-    ["Next action", fields.next],
-    ["Done when", fields.done],
-    ["State note", fields.note],
-  ].filter(([, value]) => value);
-  if (!rows.length) return "";
-  return [
-    "",
-    "Workflow state for this scheduled run:",
-    ...rows.map(([label, value]) => `- ${label}: ${value}`),
-    "- Operating rule: Treat this compact block as the current workflow state for this run. Do the next action first. Do not spend the run rediscovering the step from large workflow-state files or old context unless this message explicitly asks you to verify something.",
-  ].join("\n");
-}
-
-function effectiveMessageText(scheduleMode, jobMode) {
-  const base = els.messageInput.value.trim();
-  if (!base) return "";
-  if (!shouldAttachWorkflowState(scheduleMode, jobMode)) return base;
-  return `${base}${workflowStateBlock()}`;
-}
-
 function updateWorkflowSummary() {
   const fields = workflowFields();
   const steps = parseWorkflowStepLines(fields.stepsText);
-  if (!fields.enabled) {
+  if (!fields.stepPlanEnabled) {
     els.workflowSummary.textContent = "Off";
-  } else if (fields.stepPlanEnabled && steps.length) {
+  } else if (steps.length) {
     els.workflowSummary.textContent = `${steps.length} controlled steps`;
-  } else if (!workflowHasState(fields)) {
-    els.workflowSummary.textContent = "Message only";
   } else {
-    const count = [fields.name, fields.step, fields.next, fields.done, fields.note].filter(Boolean).length;
-    els.workflowSummary.textContent = `${count} state fields`;
+    els.workflowSummary.textContent = "No steps";
   }
 }
 
@@ -961,13 +887,13 @@ function collectPayload(kindOverride = null) {
   const wantsDelivery = deliveryMode === "notify";
   const enabled = els.enabledToggle.checked;
   const jobMode = els.jobModeInput.value;
-  const effectiveMessage = effectiveMessageText(scheduleMode, jobMode);
+  const message = els.messageInput.value.trim();
   const payload = {
     kind: kindOverride || (scheduleMode === "event" ? "event" : scheduleMode === "now" ? "agent" : "cron"),
     sessionKey: selectedSessionKey(),
-    message: effectiveMessage,
-    baseMessage: els.messageInput.value.trim(),
-    text: effectiveMessage,
+    message,
+    baseMessage: message,
+    text: message,
     name: els.jobNameInput.value.trim() || `${state.selectedSession?.label || "OpenClaw"} automation`,
     description: els.descriptionInput.value.trim(),
     enabled,
@@ -1000,7 +926,6 @@ function collectPayload(kindOverride = null) {
     wake: els.wakeInput.value,
     jobMode,
     sessionTarget: els.sessionTargetInput.value,
-    workflowStateAttached: shouldAttachWorkflowState(scheduleMode, jobMode),
     workflow: workflowFields(),
   };
   return payload;
@@ -1094,12 +1019,6 @@ const safetyCaseLookup = {
     why: "Webhook is implemented for cron jobs via --webhook.",
     fix: "Pick a schedule, or change Answer to Message me or Quiet run.",
   },
-  adaptiveWorkflow: {
-    agent: "The scheduled prompt includes a compact workflow-state block as current-step source of truth.",
-    user: "Each cron run starts with the precise step and next action you wrote here, instead of guessing from broad history.",
-    why: "This reduces slow rediscovery and avoids reading large workflow-state files just to find the next step.",
-    fix: "Keep the workflow fields short and update them when the real next step changes.",
-  },
   stepController: {
     agent: "The model receives the current step and a local reporting command. It must report complete, blocked, or failed after working the step.",
     user: "One repeating cron job can walk through many configured steps, but only when the agent marks a step complete.",
@@ -1124,7 +1043,6 @@ function safetySettingsLine(payload, meta) {
     `delivery=${deliveryLabel(payload)}`,
     `agent override=${payload.agent || "none"}`,
     `model override=${payload.model || "none"}`,
-    `adaptive workflow=${payload.workflowStateAttached ? "on" : "off"}`,
     `step controller=${payload.workflow?.stepPlanEnabled ? "on" : "off"}`,
   ].join("; ");
 }
@@ -1273,15 +1191,6 @@ function buildSafetyItems(payload) {
       severity: "danger",
       title: "Webhook is cron-only here",
       text: "Ask Now does not use webhook delivery in this app. Pick a schedule or choose Message me/Quiet run.",
-    });
-  }
-
-  if (payload.workflowStateAttached) {
-    items.push({
-      caseId: "adaptiveWorkflow",
-      severity: "notice",
-      title: "Adaptive workflow prompt",
-      text: "This scheduled run will include your compact workflow state and next action inside the prompt.",
     });
   }
 
@@ -1520,13 +1429,8 @@ window.addEventListener("resize", refreshVisibleHelpPosition);
     els.deleteAfterRunToggle,
     els.exactTimingToggle,
     els.bestEffortDeliveryToggle,
-    els.workflowAdaptiveToggle,
     els.workflowStepPlanToggle,
     els.workflowNameInput,
-    els.workflowStepInput,
-    els.workflowNextInput,
-    els.workflowDoneInput,
-    els.workflowNoteInput,
     els.workflowStepsInput,
     els.jobNameInput,
     els.descriptionInput,
