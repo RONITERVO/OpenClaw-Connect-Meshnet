@@ -433,6 +433,8 @@ function workflowAdvanceCommand(workflow, step, status) {
 function workflowStepMessage(workflow) {
   const step = workflow.steps[workflow.currentIndex] || workflow.steps[workflow.steps.length - 1];
   const lines = [
+    ": inspect what the agent sees, act as the user here, but also system/agent supervisor. This is important for the new pr, ill video record the process, this is important for output benchmarking the model, but you dont need to set up anything for thaOn it!Supervisor-run validation for OpenClaw Automator branch feature/workflow-event-log, latest pushed PR branch. Work in this repo when needed: D:\Projects\OpenClaw\openclawClickStart. Treat these as the always-available baseline context only: AGENTS.md, SOUL.md, TOOLS.md, IDENTITY.md, USER.md, HEARTBEAT.md, MEMORY.md. Do not assume any other large context has been injected; the user decides what extra context to provide. Use read-only inspection unless explicitly told otherwise. Do not modify files, format, commit, push, or create artifacts.",
+    "",
     workflow.baseMessage,
     "",
     "Important research and development, and final output to be realized on this session. Final output. Consequence: will auto apply and persist. After complete changes blocked for good, but dont mark them uneditable just call complete, claude will check this and circle this back to you and notify user only if missed something or there is something to fix. Starter info:",
@@ -442,10 +444,10 @@ function workflowStepMessage(workflow) {
     `- Focused past event log, read only if needed: ${workflowLogUrl(workflow)}`,
     //`- Active step: ${step.index + 1} of ${workflow.steps.length}`,
     `- Research and development name: ${step.name}`,
-    `- Deep thinking, safetywork, background work an concrete problem solving on: ${step.action}. Then minimal most efficient output that resolves this longterm and does not need to be patched in the future by claude. If the job is impossible for you; stop, then research online or ask. But if you are capable getting this done then go ahead.`,
+    `- Deep thinking, safetywork, background work an concrete problem solving on: Inspect exactly what this run received, then the mechanics. ${step.action} Use the named baseline files plus the repo path and anything tat is awailable when more context is necessary.. A cross-review level quality output that resolves this longterm and does not need to be patched in the future by claude. If the job is impossible for you; stop, then research online or ask. But if you are capable getting this done then go ahead. Year: 2026.`,
   ];
-  if (step.done) lines.push(`- Done when: ${step.done}`);
-  if (step.note) lines.push(`- State note: ${step.note}`);
+  if (step.done) lines.push(`- Done when: A concise COMPLETE/BLOCK/FAIL validation exists and ${step.done}`);
+  if (step.note) lines.push(`- State note: Common edge case under test: focused prompt has minimal context, but agent can use any available assets if needed.${step.note}`);
   lines.push(
     `If COMPLETE, call: ${workflowAdvanceCommand(workflow, step, "complete")}`,
     `If BLOCKED, call: ${workflowAdvanceCommand(workflow, step, "blocked")}`,
