@@ -5,18 +5,20 @@ import { existsSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const appRoot = resolve(__dirname, "..");
 const publicDir = join(__dirname, "public");
 const port = Number(process.env.OPENCLAW_AUTOMATOR_PORT || 18890);
 const stateDir = join(homedir(), ".openclaw", "automator");
+const workflowsDir = join(stateDir, "workflows");
 const settingsPath = join(stateDir, "settings.json");
 const auditPath = join(stateDir, "automation-log.jsonl");
 const defaultGatewayHttp = process.env.OPENCLAW_AUTOMATOR_GATEWAY_HTTP || "http://127.0.0.1:18789";
 const openclawCommand = process.env.OPENCLAW_BIN || (process.platform === "win32" ? "openclaw.cmd" : "openclaw");
 const openclawMjs = process.env.APPDATA ? join(process.env.APPDATA, "npm", "node_modules", "openclaw", "openclaw.mjs") : "";
-const appVersion = "0.4.3";
+const appVersion = "0.4.4";
 
 const contentTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -79,6 +81,7 @@ async function readJsonBody(req) {
 
 async function ensureStateDir() {
   await mkdir(stateDir, { recursive: true });
+  await mkdir(workflowsDir, { recursive: true });
 }
 
 async function readSettings() {
@@ -183,6 +186,93 @@ function requireText(value, label, max = 12000) {
 function optionalText(value, max = 4000) {
   if (value == null) return "";
   return String(value).trim().slice(0, max);
+}
+
+function workflowPath(id) {
+  const safe = String(id || "").replace(/[^a-zA-Z0-9_-]/g, "");
+  if (!safe) {
+    const error = new Error("Workflow id is required.");
+    error.status = 400;
+    throw error;
+  }
+  return join(workflowsDir, `${safe}.json`);
+}
+
+async function readWorkflow(id) {
+  return parseJson(await readFile(workflowPath(id), "utf8"), null);
+}
+
+async function writeWorkflow(workflow) {
+  await ensureStateDir();
+  workflow.updatedAt = new Date().toISOString();
+  await writeFile(workflowPath(workflow.id), `${JSON.stringify(workflow, null, 2)}\n`, "utf8");
+  return workflow;
+}
+
+function parseWorkflowSteps(text = "") {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line, index) => {
+      const [name, action, done, note] = line.split("|").map((part) => part.trim());
+      return {
+        index,
+        name: name || line,
+        action: action || name || line,
+        done: done || "",
+        note: note || "",
+      };
+    });
+}
+
+function workflowControllerRequested(body) {
+  const workflow = body.workflow || {};
+  const mode = String(body.scheduleMode || "now");
+  if (!workflow.stepPlanEnabled) return false;
+  if (String(body.jobMode || "agent") === "system-event") return false;
+  if (mode !== "every" && mode !== "cron") return false;
+  return parseWorkflowSteps(workflow.stepsText).length > 0;
+}
+
+function psSingle(value) {
+  return String(value ?? "").replace(/'/g, "''");
+}
+
+function workflowAdvanceCommand(workflow, step, status) {
+  const body = `@{ jobId = '${psSingle(workflow.jobId)}'; stepIndex = ${step.index}; status = '${status}'; summary = 'replace with short result' } | ConvertTo-Json -Compress`;
+  return `powershell -NoProfile -ExecutionPolicy Bypass -Command "$body = ${body}; Invoke-RestMethod -Method POST -Uri 'http://127.0.0.1:${port}/api/workflows/${workflow.id}/advance' -ContentType 'application/json' -Body $body"`;
+}
+
+function workflowStepMessage(workflow) {
+  const step = workflow.steps[workflow.currentIndex] || workflow.steps[workflow.steps.length - 1];
+  const lines = [
+    workflow.baseMessage,
+    "",
+    "Adaptive workflow controller for this scheduled run:",
+    `- Workflow ID: ${workflow.id}`,
+    `- Cron job ID: ${workflow.jobId || "pending"}`,
+    `- Workflow: ${workflow.name || "Unnamed workflow"}`,
+    `- Active step: ${step.index + 1} of ${workflow.steps.length}`,
+    `- Step name: ${step.name}`,
+    `- Next action: ${step.action}`,
+  ];
+  if (step.done) lines.push(`- Done when: ${step.done}`);
+  if (step.note) lines.push(`- State note: ${step.note}`);
+  lines.push(
+    "",
+    "Progression rules:",
+    "- Work only this active step. Do not skip ahead.",
+    "- If the step is blocked or fails, do not mark it complete. Report blocked or failed and leave the active step unchanged.",
+    "- Advance only after the done condition is actually met.",
+    "- After a complete, blocked, or failed result, call exactly one local controller command below.",
+    "- The OpenClaw Automator backend must be running at the local controller URL when you report status. If it is unavailable, explain that the workflow controller could not be updated.",
+    "",
+    `If COMPLETE, call: ${workflowAdvanceCommand(workflow, step, "complete")}`,
+    `If BLOCKED, call: ${workflowAdvanceCommand(workflow, step, "blocked")}`,
+    `If FAILED, call: ${workflowAdvanceCommand(workflow, step, "failed")}`,
+  );
+  return lines.join("\n");
 }
 
 function normalizeThinking(value, fallback = "xhigh") {
@@ -474,6 +564,139 @@ async function runCommand(kind, args, timeoutMs) {
   return payload;
 }
 
+async function createCronWorkflow(body, settings) {
+  const workflowBody = body.workflow || {};
+  const steps = parseWorkflowSteps(workflowBody.stepsText);
+  const workflow = {
+    id: randomUUID(),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    jobId: "",
+    status: "creating",
+    currentIndex: 0,
+    name: optionalText(workflowBody.name || body.name || "OpenClaw workflow", 200),
+    baseMessage: requireText(body.baseMessage || body.message, "Message"),
+    steps,
+    history: [],
+  };
+  await writeWorkflow(workflow);
+
+  const requestedEnabled = body.enabled !== false && !body.disabled;
+  const firstBody = {
+    ...body,
+    enabled: false,
+    disabled: true,
+    message: workflowStepMessage(workflow),
+  };
+  const addArgs = cronArgs(firstBody, settings);
+  const addResult = await runCommand("cron", addArgs, 30000);
+  const jobId = addResult.json?.id || "";
+  if (!addResult.ok || !jobId) {
+    workflow.status = "create_failed";
+    workflow.history.push({ at: new Date().toISOString(), status: "create_failed", summary: addResult.stderr || addResult.error || "cron add failed" });
+    await writeWorkflow(workflow);
+    return { ...addResult, workflow };
+  }
+
+  workflow.jobId = jobId;
+  workflow.status = requestedEnabled ? "active" : "disabled";
+  await writeWorkflow(workflow);
+
+  const editMessageArgs = ["cron", "edit", jobId, "--message", workflowStepMessage(workflow)];
+  const editMessageResult = await execOpenClaw(editMessageArgs, { timeoutMs: 30000 });
+  const enableArgs = requestedEnabled ? ["cron", "edit", jobId, "--enable"] : null;
+  const enableResult = enableArgs ? await execOpenClaw(enableArgs, { timeoutMs: 30000 }) : null;
+  const ok = addResult.ok && editMessageResult.ok && (!enableResult || enableResult.ok);
+  await appendAudit({
+    kind: "workflow-cron",
+    ok,
+    command: displayCommand(addArgs),
+    code: ok ? 0 : editMessageResult.code || enableResult?.code || addResult.code,
+    durationMs: addResult.durationMs,
+  });
+  return {
+    ...addResult,
+    ok,
+    workflow,
+    controller: {
+      enabled: true,
+      workflowId: workflow.id,
+      jobId,
+      addCommand: displayCommand(addArgs),
+      editMessageCommand: displayCommand(editMessageArgs),
+      enableCommand: enableArgs ? displayCommand(enableArgs) : "",
+      editMessage: {
+        ok: editMessageResult.ok,
+        stdout: editMessageResult.stdout,
+        stderr: editMessageResult.stderr,
+        error: editMessageResult.error,
+      },
+      enable: enableResult ? {
+        ok: enableResult.ok,
+        stdout: enableResult.stdout,
+        stderr: enableResult.stderr,
+        error: enableResult.error,
+      } : null,
+    },
+  };
+}
+
+async function advanceWorkflow(id, body) {
+  const workflow = await readWorkflow(id);
+  if (!workflow) {
+    const error = new Error("Workflow not found.");
+    error.status = 404;
+    throw error;
+  }
+  const jobId = optionalText(body.jobId, 120);
+  if (jobId !== workflow.jobId) {
+    const error = new Error("Workflow job id mismatch.");
+    error.status = 400;
+    throw error;
+  }
+  const stepIndex = Number(body.stepIndex);
+  if (!Number.isInteger(stepIndex) || stepIndex !== workflow.currentIndex) {
+    return { ok: true, advanced: false, workflow, reason: "stale step report ignored" };
+  }
+  const status = String(body.status || "").toLowerCase();
+  const summary = optionalText(body.summary, 1000);
+  workflow.history.push({
+    at: new Date().toISOString(),
+    stepIndex,
+    status,
+    summary,
+  });
+
+  if (["complete", "completed", "done", "success"].includes(status)) {
+    workflow.steps[stepIndex].status = "complete";
+    workflow.steps[stepIndex].completedAt = new Date().toISOString();
+    workflow.currentIndex += 1;
+    if (workflow.currentIndex >= workflow.steps.length) {
+      workflow.status = "complete";
+      const disableArgs = ["cron", "edit", workflow.jobId, "--disable", "--description", `${workflow.name} completed by workflow controller.`];
+      const disableResult = await execOpenClaw(disableArgs, { timeoutMs: 30000 });
+      await writeWorkflow(workflow);
+      return { ok: disableResult.ok, advanced: true, complete: true, workflow, command: displayCommand(disableArgs), result: disableResult };
+    }
+    workflow.status = "active";
+    const editArgs = ["cron", "edit", workflow.jobId, "--message", workflowStepMessage(workflow)];
+    const editResult = await execOpenClaw(editArgs, { timeoutMs: 30000 });
+    await writeWorkflow(workflow);
+    return { ok: editResult.ok, advanced: true, complete: false, workflow, command: displayCommand(editArgs), result: editResult };
+  }
+
+  if (["blocked", "failed", "fail", "error"].includes(status)) {
+    workflow.status = status === "blocked" ? "blocked" : "failed";
+    workflow.steps[stepIndex].status = workflow.status;
+    workflow.steps[stepIndex].lastSummary = summary;
+    await writeWorkflow(workflow);
+    return { ok: true, advanced: false, workflow, reason: `step marked ${workflow.status}; active step unchanged` };
+  }
+
+  await writeWorkflow(workflow);
+  return { ok: true, advanced: false, workflow, reason: "unknown status; active step unchanged" };
+}
+
 async function handleApi(req, res, pathname) {
   if (req.method === "GET" && pathname === "/api/health") {
     jsonResponse(res, 200, { ok: true, app: "OpenClaw Automator", version: appVersion, port });
@@ -510,8 +733,18 @@ async function handleApi(req, res, pathname) {
   if (req.method === "POST" && pathname === "/api/cron/create") {
     const settings = await readSettings();
     const body = await readJsonBody(req);
+    if (workflowControllerRequested(body)) {
+      jsonResponse(res, 200, await createCronWorkflow(body, settings));
+      return;
+    }
     const args = cronArgs(body, settings);
     jsonResponse(res, 200, await runCommand("cron", args, 30000));
+    return;
+  }
+  if (req.method === "POST" && pathname.startsWith("/api/workflows/") && pathname.endsWith("/advance")) {
+    const id = decodeURIComponent(pathname.split("/")[3] || "");
+    const body = await readJsonBody(req);
+    jsonResponse(res, 200, await advanceWorkflow(id, body));
     return;
   }
   if (req.method === "POST" && pathname === "/api/system/event") {

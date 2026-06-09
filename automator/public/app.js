@@ -51,11 +51,13 @@ const els = {
   bestEffortDeliveryToggle: $("bestEffortDeliveryToggle"),
   workflowSummary: $("workflowSummary"),
   workflowAdaptiveToggle: $("workflowAdaptiveToggle"),
+  workflowStepPlanToggle: $("workflowStepPlanToggle"),
   workflowNameInput: $("workflowNameInput"),
   workflowStepInput: $("workflowStepInput"),
   workflowNextInput: $("workflowNextInput"),
   workflowDoneInput: $("workflowDoneInput"),
   workflowNoteInput: $("workflowNoteInput"),
+  workflowStepsInput: $("workflowStepsInput"),
   jobNameInput: $("jobNameInput"),
   descriptionInput: $("descriptionInput"),
   sessionKeyInput: $("sessionKeyInput"),
@@ -261,6 +263,11 @@ const helpCatalog = {
     simple: "Add the workflow fields to scheduled prompts.",
     detailed: "When enabled, cron/once-later/repeat jobs append a small source-of-truth block to --message. Ask Now and system events stay as the plain message.",
   },
+  workflowStepPlan: {
+    title: "Step plan controller",
+    simple: "Let one repeating job move through steps.",
+    detailed: "For Every and cron-expression jobs, the backend stores the Step plan and creates a self-updating workflow controller. Each run receives only the current step. The step advances only after the agent reports the current step complete through the local controller endpoint at 127.0.0.1:18890. Failed or blocked steps do not advance.",
+  },
   workflowName: {
     title: "Workflow",
     simple: "Name the larger task.",
@@ -285,6 +292,11 @@ const helpCatalog = {
     title: "State note",
     simple: "Small facts the next run should trust.",
     detailed: "Included as concise state. Keep it short: paths, branch names, PR links, last verified result, or the exact blocker. Do not paste large logs or long workflow files here.",
+  },
+  workflowSteps: {
+    title: "Step plan",
+    simple: "Write the long workflow as steps.",
+    detailed: "One step per line. Format: Step name | Next action | Done when | State note. The app stores the full plan locally, but each repeating cron run receives only the active step plus an advance/blocked reporting command. This avoids skipping ahead when a step fails.",
   },
   deleteAfterRun: {
     title: "Delete after run",
@@ -528,22 +540,41 @@ function selectedDeliveryMatchesContext(payload, contextParts) {
 function workflowFields() {
   return {
     enabled: Boolean(els.workflowAdaptiveToggle?.checked),
+    stepPlanEnabled: Boolean(els.workflowStepPlanToggle?.checked),
     name: els.workflowNameInput.value.trim(),
     step: els.workflowStepInput.value.trim(),
     next: els.workflowNextInput.value.trim(),
     done: els.workflowDoneInput.value.trim(),
     note: els.workflowNoteInput.value.trim(),
+    stepsText: els.workflowStepsInput.value.trim(),
   };
 }
 
+function parseWorkflowStepLines(text = "") {
+  return String(text)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [name, action, done, note] = line.split("|").map((part) => part.trim());
+      return {
+        name: name || line,
+        action: action || name || line,
+        done: done || "",
+        note: note || "",
+      };
+    });
+}
+
 function workflowHasState(fields = workflowFields()) {
-  return Boolean(fields.name || fields.step || fields.next || fields.done || fields.note);
+  return Boolean(fields.name || fields.step || fields.next || fields.done || fields.note || fields.stepsText);
 }
 
 function shouldAttachWorkflowState(scheduleMode, jobMode) {
   if (!els.workflowAdaptiveToggle.checked) return false;
   if (jobMode === "system-event") return false;
   if (scheduleMode === "now" || scheduleMode === "event") return false;
+  if (els.workflowStepPlanToggle.checked && parseWorkflowStepLines(els.workflowStepsInput.value).length) return false;
   return workflowHasState();
 }
 
@@ -573,8 +604,11 @@ function effectiveMessageText(scheduleMode, jobMode) {
 
 function updateWorkflowSummary() {
   const fields = workflowFields();
+  const steps = parseWorkflowStepLines(fields.stepsText);
   if (!fields.enabled) {
     els.workflowSummary.textContent = "Off";
+  } else if (fields.stepPlanEnabled && steps.length) {
+    els.workflowSummary.textContent = `${steps.length} controlled steps`;
   } else if (!workflowHasState(fields)) {
     els.workflowSummary.textContent = "Message only";
   } else {
@@ -1066,6 +1100,12 @@ const safetyCaseLookup = {
     why: "This reduces slow rediscovery and avoids reading large workflow-state files just to find the next step.",
     fix: "Keep the workflow fields short and update them when the real next step changes.",
   },
+  stepController: {
+    agent: "The model receives the current step and a local reporting command. It must report complete, blocked, or failed after working the step.",
+    user: "One repeating cron job can walk through many configured steps, but only when the agent marks a step complete.",
+    why: "The controller prevents accidental skipping: blocked or failed reports keep the same active step for the next run.",
+    fix: "Use Every or Cron schedule, give each step a concrete done condition, and keep OpenClaw Automator running so the agent can call the local controller endpoint.",
+  },
   ok: {
     agent: "The model reads and replies through the same selected route as closely as OpenClaw exposes it.",
     user: "This is the normal safe path.",
@@ -1085,6 +1125,7 @@ function safetySettingsLine(payload, meta) {
     `agent override=${payload.agent || "none"}`,
     `model override=${payload.model || "none"}`,
     `adaptive workflow=${payload.workflowStateAttached ? "on" : "off"}`,
+    `step controller=${payload.workflow?.stepPlanEnabled ? "on" : "off"}`,
   ].join("; ");
 }
 
@@ -1241,6 +1282,21 @@ function buildSafetyItems(payload) {
       severity: "notice",
       title: "Adaptive workflow prompt",
       text: "This scheduled run will include your compact workflow state and next action inside the prompt.",
+    });
+  }
+
+  if (isCron && payload.workflow?.stepPlanEnabled) {
+    const stepCount = parseWorkflowStepLines(payload.workflow.stepsText || "").length;
+    const supportsStepController = payload.scheduleMode === "every" || payload.scheduleMode === "cron";
+    items.push({
+      caseId: "stepController",
+      severity: !supportsStepController || !stepCount ? "danger" : "notice",
+      title: !supportsStepController ? "Step controller needs repeat" : stepCount ? "Step controller active" : "Step plan is empty",
+      text: !supportsStepController
+        ? "Step plan controller needs an Every or Cron schedule. One-time jobs cannot safely walk a long plan."
+        : stepCount
+        ? `This repeating cron can walk ${stepCount} configured steps, but it advances only after the agent reports the current step complete.`
+        : "Step plan controller is on, but no steps are configured.",
     });
   }
 
@@ -1465,11 +1521,13 @@ window.addEventListener("resize", refreshVisibleHelpPosition);
     els.exactTimingToggle,
     els.bestEffortDeliveryToggle,
     els.workflowAdaptiveToggle,
+    els.workflowStepPlanToggle,
     els.workflowNameInput,
     els.workflowStepInput,
     els.workflowNextInput,
     els.workflowDoneInput,
     els.workflowNoteInput,
+    els.workflowStepsInput,
     els.jobNameInput,
     els.descriptionInput,
     els.sessionKeyInput,

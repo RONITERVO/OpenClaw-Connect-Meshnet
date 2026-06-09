@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OpenClaw Automator</title>
-  <link rel="stylesheet" href="./styles.css?v=0.4.3">
+  <link rel="stylesheet" href="./styles.css?v=0.4.4">
 </head>
 <body>
   <main class="shell">
@@ -193,6 +193,10 @@
               <input id="workflowAdaptiveToggle" type="checkbox" checked>
               <span>Adaptive cron prompt</span>
             </label>
+            <label class="toggle" data-help-key="workflowStepPlan">
+              <input id="workflowStepPlanToggle" type="checkbox">
+              <span>Step plan controller</span>
+            </label>
             <div class="advanced-grid workflow-grid">
               <label class="field" data-help-key="workflowName">
                 <span>Workflow</span>
@@ -213,6 +217,10 @@
               <label class="field wide-field" data-help-key="workflowNote">
                 <span>State note</span>
                 <textarea id="workflowNoteInput" rows="3" placeholder="Small facts the next run should trust instead of rediscovering"></textarea>
+              </label>
+              <label class="field wide-field" data-help-key="workflowSteps">
+                <span>Step plan</span>
+                <textarea id="workflowStepsInput" rows="5" placeholder="One step per line: Step name | Next action | Done when | State note"></textarea>
               </label>
             </div>
           </section>
@@ -342,6 +350,6 @@
     </div>
     <div id="helpBubbleText" class="help-text"></div>
   </div>
-  <script src="./app.js?v=0.4.3" type="module"></script>
+  <script src="./app.js?v=0.4.4" type="module"></script>
 </body>
 </html>
