@@ -4,12 +4,20 @@ const state = {
   jobs: [],
   selectedSession: null,
   mode: "now",
+  helpMode: localStorage.getItem("openclawAutomatorHelpMode") || "simple",
+  helpTimer: null,
+  helpTarget: null,
 };
 
 const $ = (id) => document.getElementById(id);
 
 const els = {
   statusLine: $("statusLine"),
+  helpSimpleBtn: $("helpSimpleBtn"),
+  helpDetailedBtn: $("helpDetailedBtn"),
+  helpBubble: $("helpBubble"),
+  helpBubbleTitle: $("helpBubbleTitle"),
+  helpBubbleText: $("helpBubbleText"),
   refreshBtn: $("refreshBtn"),
   gatewayLink: $("gatewayLink"),
   sessionCount: $("sessionCount"),
@@ -45,6 +53,209 @@ const els = {
   backendBadge: $("backendBadge"),
 };
 
+const helpCatalog = {
+  helpSimple: {
+    title: "Simple labels",
+    simple: "Use short explanations.",
+    detailed: "Shows plain-language labels for users who want the app to choose sensible defaults and avoid command details.",
+  },
+  helpDetailed: {
+    title: "Detailed labels",
+    simple: "Use careful explanations.",
+    detailed: "Shows implementation-oriented labels: exact OpenClaw command effects, routing, delivery, scheduling, timeouts, and side effects before execution.",
+  },
+  refresh: {
+    title: "Refresh",
+    simple: "Ask the app to look again for chats, jobs, and Gateway health.",
+    detailed: "Runs the local backend bootstrap again. The backend calls OpenClaw session, cron, and gateway status commands, then rebuilds this page state without sending an agent message.",
+  },
+  gateway: {
+    title: "Open Gateway",
+    simple: "Open the main OpenClaw page.",
+    detailed: "Opens the configured Gateway web UI, usually http://127.0.0.1:18789/. This does not run a command; it just opens the OpenClaw control page in a new tab.",
+  },
+  modeNow: {
+    title: "Tell agent",
+    simple: "Send the message now.",
+    detailed: "Builds an openclaw agent command using the selected session key. If delivery is enabled, it also adds reply-channel and reply-to so the final answer can go back to the chat.",
+  },
+  modeLater: {
+    title: "Remind me",
+    simple: "Tell the agent later one time.",
+    detailed: "Switches to a one-shot cron job using --at. Relative times like +30m are passed to openclaw cron add and can be deleted after a successful run.",
+  },
+  modeDaily: {
+    title: "Check in",
+    simple: "Ask the agent on a daily schedule.",
+    detailed: "Switches to cron mode with a default 0 9 * * * schedule in your timezone. The backend creates a persistent OpenClaw cron job.",
+  },
+  modeAdvanced: {
+    title: "Build flow",
+    simple: "Show the extra controls.",
+    detailed: "Opens the full command surface: session key, reply routing, model thinking, timeout, tool allow-list, wake mode, and system-event mode. It also switches help labels to Detailed.",
+  },
+  sessionSearch: {
+    title: "Find chat",
+    simple: "Type part of a chat name to find it.",
+    detailed: "Filters the locally loaded session list by label, session key, and subtitle. It does not query OpenClaw until you press Refresh.",
+  },
+  sessionList: {
+    title: "Chats",
+    simple: "Pick where the message should go.",
+    detailed: "These are OpenClaw session keys from openclaw sessions --all-agents --json --limit all. Selecting one controls the --session-key used by agent, cron, or system-event commands.",
+  },
+  sessionCard: {
+    title: "Chat",
+    simple: "This is one place the agent can remember and answer.",
+    detailed: "Selecting this session writes its exact key into Advanced settings. Telegram direct sessions usually include a reply target, so delivery can be prefilled.",
+  },
+  selectedBadge: {
+    title: "Selected chat",
+    simple: "This is where your message will go.",
+    detailed: "This label mirrors the selected session key. The generated command uses that key unless you override Session key in Advanced settings.",
+  },
+  preset: {
+    title: "Shortcut",
+    simple: "Fill the message box with a useful starter.",
+    detailed: "Applies a local UI preset only. It changes fields in the form; it does not create a job or send anything until you press Run now or Create job.",
+  },
+  messageLabel: {
+    title: "Message",
+    simple: "Write what you want the agent to do.",
+    detailed: "This becomes --message for agent and cron jobs, or --text for system events. It is sent to the selected session when you run or schedule the flow.",
+  },
+  message: {
+    title: "Message",
+    simple: "Write the words the agent should read.",
+    detailed: "The backend passes this text as a single command argument, not shell text. It is still the actual prompt content the agent receives.",
+  },
+  when: {
+    title: "When",
+    simple: "Choose now, later, repeating, or system event.",
+    detailed: "Now calls openclaw agent. Once later, Repeat, and Cron call openclaw cron add. System event calls openclaw system event.",
+  },
+  runAt: {
+    title: "Run at",
+    simple: "Pick when it should happen one time.",
+    detailed: "Passed to openclaw cron add --at. Supports OpenClaw's time parser, including relative values like +30m and ISO datetimes; timezone is used for offset-less datetimes.",
+  },
+  every: {
+    title: "Every",
+    simple: "Repeat after this much time.",
+    detailed: "Passed to openclaw cron add --every. Examples: 10m, 1h, 2h, 1d. This creates a persistent repeating job.",
+  },
+  cron: {
+    title: "Cron",
+    simple: "A clock rule for advanced schedules.",
+    detailed: "Passed to openclaw cron add --cron. Uses 5-field or 6-field cron expressions. Example: 0 9 * * * means every day at 09:00 in the selected timezone.",
+  },
+  timezone: {
+    title: "Timezone",
+    simple: "Which clock the schedule should use.",
+    detailed: "Passed as --tz for cron and one-shot jobs. Use an IANA timezone like Europe/Helsinki so scheduled times do not drift when the PC or user moves.",
+  },
+  deliver: {
+    title: "Send answer back",
+    simple: "Let the answer come back to Telegram.",
+    detailed: "For immediate runs, adds --deliver plus reply-channel and reply-to. For scheduled jobs, adds --announce and delivery target flags when a reply target exists.",
+  },
+  expectFinal: {
+    title: "Wait for answer",
+    simple: "Wait until the agent finishes.",
+    detailed: "Adds --expect-final for cron jobs. This makes the job runner wait for a final agent response instead of only starting the work.",
+  },
+  lightContext: {
+    title: "Light context",
+    simple: "Start with less extra memory.",
+    detailed: "Adds --light-context to cron jobs. Use it for small reminders when you do not want a heavy context bootstrap.",
+  },
+  advancedSummary: {
+    title: "Advanced settings",
+    simple: "Extra controls live here.",
+    detailed: "These fields map directly to OpenClaw CLI flags. They are for users who want to verify routing, delivery, model effort, timeout, tool access, and wake behavior before execution.",
+  },
+  sessionKey: {
+    title: "Session key",
+    simple: "The exact chat address inside OpenClaw.",
+    detailed: "Used as --session-key. Example: agent:main:telegram:direct:8910901726. Changing this can route the prompt to a different stored conversation.",
+  },
+  replyChannel: {
+    title: "Reply channel",
+    simple: "Where the answer should be sent.",
+    detailed: "Used as --reply-channel for immediate runs and --channel for cron delivery. For your setup this is usually telegram.",
+  },
+  replyTo: {
+    title: "Reply to",
+    simple: "Who receives the answer.",
+    detailed: "Used as --reply-to for immediate runs and --to for scheduled delivery. For Telegram direct chats this is the Telegram chat/user id.",
+  },
+  thinking: {
+    title: "Thinking",
+    simple: "How hard the agent should think.",
+    detailed: "Adds --thinking. xhigh spends more reasoning budget and is slower/costlier; lower values are faster for simple reminders.",
+  },
+  timeout: {
+    title: "Timeout",
+    simple: "How long the app waits before giving up.",
+    detailed: "Immediate runs pass --timeout seconds. Cron jobs pass --timeout-seconds. This limits how long the OpenClaw command may run before the app treats it as failed.",
+  },
+  tools: {
+    title: "Tools",
+    simple: "Limit what the agent can use.",
+    detailed: "Passed to cron jobs as --tools. Use comma-separated tool names like exec,read,write. Leave empty for OpenClaw defaults.",
+  },
+  wake: {
+    title: "Wake",
+    simple: "Choose when a scheduled job wakes the agent.",
+    detailed: "Passed as --wake for cron jobs. now runs at job time; next-heartbeat defers work to the next heartbeat window.",
+  },
+  jobMode: {
+    title: "Job mode",
+    simple: "Choose normal message or system note.",
+    detailed: "Agent message uses --message and creates a normal agent turn. System event uses --system-event and is treated more like an internal event than a user chat prompt.",
+  },
+  commandPreview: {
+    title: "Command preview",
+    simple: "This shows what the app will do.",
+    detailed: "This is the exact OpenClaw CLI command shape the backend will execute. The backend uses argument arrays, so this preview is for review, not shell execution.",
+  },
+  primaryAction: {
+    title: "Run or create",
+    simple: "Press this when you are ready.",
+    detailed: "Runs the backend endpoint for the selected flow. Now/System event execute immediately. Later/Repeat/Cron create OpenClaw cron jobs.",
+  },
+  previewAction: {
+    title: "Preview command",
+    simple: "Check the plan without doing it.",
+    detailed: "Calls /api/preview only. It validates fields and returns the command arguments without sending a message or creating a cron job.",
+  },
+  result: {
+    title: "Result",
+    simple: "The app puts answers and errors here.",
+    detailed: "Shows the backend response, including command preview, stdout, stderr, parsed JSON when available, exit code, and duration.",
+  },
+  jobs: {
+    title: "Jobs",
+    simple: "Scheduled things show up here.",
+    detailed: "Loaded from openclaw cron list --json. This panel is read-only in this version; edit or remove jobs with OpenClaw CLI if needed.",
+  },
+  jobRow: {
+    title: "Job",
+    simple: "This is one saved schedule.",
+    detailed: "A cron job reported by OpenClaw. It may run an agent message, system event, webhook, or delivery flow depending on its stored config.",
+  },
+  backend: {
+    title: "Backend",
+    simple: "Green means the helper can talk to OpenClaw.",
+    detailed: "Shows local backend checks for sessions, cron, and Gateway status. Failures here usually mean OpenClaw is stopped, unreachable, or not on PATH.",
+  },
+  checkRow: {
+    title: "Check",
+    simple: "This tells whether one part is working.",
+    detailed: "Each row is a backend collector result. Sessions and cron use OpenClaw CLI commands; Gateway uses openclaw gateway status text.",
+  },
+};
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -57,6 +268,67 @@ function shortKey(key) {
   if (!key) return "";
   if (key.length <= 40) return key;
   return `${key.slice(0, 22)}...${key.slice(-12)}`;
+}
+
+function helpTextFor(element) {
+  const key = element?.dataset?.helpKey;
+  const entry = key ? helpCatalog[key] : null;
+  const simple = element?.dataset?.helpSimple || entry?.simple || "";
+  const detailed = element?.dataset?.helpDetailed || entry?.detailed || simple;
+  const title = element?.dataset?.helpTitle || entry?.title || "Help";
+  return {
+    title,
+    text: state.helpMode === "detailed" ? detailed : simple,
+  };
+}
+
+function positionHelpBubble(target) {
+  const rect = target.getBoundingClientRect();
+  const bubble = els.helpBubble;
+  const margin = 12;
+  const maxLeft = window.innerWidth - bubble.offsetWidth - margin;
+  let left = Math.min(Math.max(rect.left, margin), Math.max(margin, maxLeft));
+  let top = rect.bottom + margin;
+  if (top + bubble.offsetHeight > window.innerHeight - margin) {
+    top = rect.top - bubble.offsetHeight - margin;
+  }
+  if (top < margin) top = margin;
+  bubble.style.left = `${left}px`;
+  bubble.style.top = `${top}px`;
+}
+
+function showHelp(target) {
+  const help = helpTextFor(target);
+  if (!help.text) return;
+  els.helpBubbleTitle.textContent = help.title;
+  els.helpBubbleText.textContent = help.text;
+  els.helpBubble.hidden = false;
+  positionHelpBubble(target);
+}
+
+function hideHelp() {
+  clearTimeout(state.helpTimer);
+  state.helpTimer = null;
+  state.helpTarget = null;
+  els.helpBubble.hidden = true;
+}
+
+function queueHelp(target, delayMs = 5000) {
+  hideHelp();
+  if (!helpTextFor(target).text) return;
+  state.helpTarget = target;
+  state.helpTimer = setTimeout(() => {
+    if (state.helpTarget === target) showHelp(target);
+  }, delayMs);
+}
+
+function setHelpMode(mode) {
+  state.helpMode = mode === "detailed" ? "detailed" : "simple";
+  localStorage.setItem("openclawAutomatorHelpMode", state.helpMode);
+  document.body.dataset.helpMode = state.helpMode;
+  els.helpSimpleBtn.classList.toggle("active", state.helpMode === "simple");
+  els.helpDetailedBtn.classList.toggle("active", state.helpMode === "detailed");
+  hideHelp();
 }
 
 async function api(path, options = {}) {
@@ -103,8 +375,10 @@ function renderSessions() {
   els.sessionList.innerHTML = sessions.map((session) => {
     const selected = session.key === state.selectedSession?.key ? "selected" : "";
     const delivery = session.delivery?.available ? "reply ready" : "local only";
+    const simpleHelp = `${session.label}: choose this chat if this is where the agent should listen.`;
+    const detailedHelp = `${session.label}. Session key: ${session.key}. Delivery: ${delivery}. Selecting it sets --session-key and prefills reply routing when OpenClaw exposes a target.`;
     return `
-      <button class="session-card ${selected}" data-session-key="${escapeHtml(session.key)}">
+      <button class="session-card ${selected}" data-session-key="${escapeHtml(session.key)}" data-help-key="sessionCard" data-help-title="${escapeHtml(session.label)}" data-help-simple="${escapeHtml(simpleHelp)}" data-help-detailed="${escapeHtml(detailedHelp)}">
         <strong>${escapeHtml(session.label)}</strong>
         <span>${escapeHtml(session.subtitle)}</span>
         <small>${escapeHtml(delivery)} / ${escapeHtml(shortKey(session.key))}</small>
@@ -116,14 +390,14 @@ function renderSessions() {
 function renderPresets() {
   const presets = state.bootstrap?.presets || [];
   els.presetRow.innerHTML = presets.map((preset) => `
-    <button class="preset" data-preset="${escapeHtml(preset.id)}">${escapeHtml(preset.title)}</button>
+    <button class="preset" data-preset="${escapeHtml(preset.id)}" data-help-key="preset">${escapeHtml(preset.title)}</button>
   `).join("");
 }
 
 function renderJobs() {
   els.jobCount.textContent = String(state.jobs.length);
   els.jobsList.innerHTML = state.jobs.map((job) => `
-    <div class="job-row">
+    <div class="job-row" data-help-key="jobRow">
       <strong>${escapeHtml(job.name || job.id || "OpenClaw job")}</strong>
       <span>${escapeHtml(job.schedule || job.cron || job.every || job.nextRunAt || "scheduled")}</span>
     </div>
@@ -133,7 +407,7 @@ function renderJobs() {
 function renderChecks() {
   const checks = state.bootstrap?.checks || {};
   const rows = Object.entries(checks).map(([name, value]) => `
-    <div class="check-row ${value.ok ? "ok" : "bad"}">
+    <div class="check-row ${value.ok ? "ok" : "bad"}" data-help-key="checkRow">
       <span>${escapeHtml(name)}</span>
       <strong>${value.ok ? "ok" : "check"}</strong>
     </div>
@@ -173,6 +447,7 @@ function setMode(mode) {
     els.cronInput.value = "0 9 * * *";
   } else if (mode === "advanced") {
     $("advancedBox").open = true;
+    setHelpMode("detailed");
   }
   updateScheduleControls();
   updatePreview();
@@ -318,6 +593,11 @@ async function load() {
 }
 
 document.addEventListener("click", (event) => {
+  const helpChoice = event.target.closest(".help-choice[data-help-mode]");
+  if (helpChoice) {
+    setHelpMode(helpChoice.dataset.helpMode);
+    return;
+  }
   const sessionButton = event.target.closest("[data-session-key]");
   if (sessionButton) {
     const session = state.sessions.find((item) => item.key === sessionButton.dataset.sessionKey);
@@ -331,6 +611,42 @@ document.addEventListener("click", (event) => {
   const tile = event.target.closest(".mode-tile");
   if (tile) setMode(tile.dataset.mode);
 });
+
+function handleHelpEnter(event) {
+  const target = event.target.closest("[data-help-key]");
+  if (!target || target === state.helpTarget || !document.body.contains(target)) return;
+  queueHelp(target, 5000);
+}
+
+function handleHelpLeave(event) {
+  if (!state.helpTarget) return;
+  const next = event.relatedTarget;
+  if (next && state.helpTarget.contains(next)) return;
+  hideHelp();
+}
+
+document.addEventListener("pointerover", handleHelpEnter);
+document.addEventListener("pointerout", handleHelpLeave);
+document.addEventListener("mouseover", handleHelpEnter);
+document.addEventListener("mouseout", handleHelpLeave);
+
+document.addEventListener("focusin", (event) => {
+  const target = event.target.closest("[data-help-key]");
+  if (target) queueHelp(target, 1200);
+});
+
+document.addEventListener("focus", (event) => {
+  const target = event.target.closest("[data-help-key]");
+  if (target) queueHelp(target, 1200);
+}, true);
+
+document.addEventListener("focusout", hideHelp);
+document.addEventListener("blur", hideHelp, true);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") hideHelp();
+});
+window.addEventListener("scroll", hideHelp, true);
+window.addEventListener("resize", hideHelp);
 
 ["input", "change"].forEach((eventName) => {
   [
@@ -362,6 +678,7 @@ els.refreshBtn.addEventListener("click", () => load().catch((error) => setResult
 els.primaryAction.addEventListener("click", runPrimary);
 els.previewBtn.addEventListener("click", previewNow);
 
+setHelpMode(state.helpMode);
 load().catch((error) => {
   els.statusLine.textContent = "Could not load OpenClaw state";
   setResult(error.message, true);

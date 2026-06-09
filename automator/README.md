@@ -18,6 +18,8 @@ Start-OpenClaw-Automator.cmd
 - Write the message the agent should receive.
 - Choose now, later, repeat, daily, or advanced.
 - Let the backend fill reply targets for Telegram sessions.
+- Hover on a control for 5 seconds to show contextual labels.
+- Use **Simple** labels for plain-language explanations, or **Detailed** labels to see the exact OpenClaw behavior before acting.
 
 For a selected Telegram direct session, the immediate command is equivalent to:
 

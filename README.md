@@ -28,6 +28,7 @@ What it does:
 - optionally delivers the agent response back to Telegram
 - creates scheduled jobs with `openclaw cron add`
 - supports advanced settings for session key, reply target, thinking level, timeout, tools, wake mode, and system-event flows
+- shows delayed contextual labels after a 5-second hover, with Simple and Detailed modes
 
 Build a distributable zip:
 

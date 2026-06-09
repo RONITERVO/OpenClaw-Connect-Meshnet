@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OpenClaw Automator</title>
-  <link rel="stylesheet" href="./styles.css?v=0.1.0">
+  <link rel="stylesheet" href="./styles.css?v=0.2.0">
 </head>
 <body>
   <main class="shell">
@@ -17,25 +17,29 @@
         </div>
       </div>
       <div class="top-actions">
-        <button id="refreshBtn" class="icon-button" title="Refresh state">Refresh</button>
-        <a id="gatewayLink" class="ghost-button" href="http://127.0.0.1:18789/" target="_blank" rel="noreferrer">Open Gateway</a>
+        <div class="help-mode" role="group" aria-label="Help detail">
+          <button id="helpSimpleBtn" class="help-choice active" type="button" data-help-mode="simple" data-help-key="helpSimple">Simple</button>
+          <button id="helpDetailedBtn" class="help-choice" type="button" data-help-mode="detailed" data-help-key="helpDetailed">Detailed</button>
+        </div>
+        <button id="refreshBtn" class="icon-button" title="Refresh state" data-help-key="refresh">Refresh</button>
+        <a id="gatewayLink" class="ghost-button" href="http://127.0.0.1:18789/" target="_blank" rel="noreferrer" data-help-key="gateway">Open Gateway</a>
       </div>
     </header>
 
     <section class="hero-strip" aria-label="Quick flow">
-      <button class="mode-tile active" data-mode="now">
+      <button class="mode-tile active" data-mode="now" data-help-key="modeNow">
         <span>Now</span>
         <strong>Tell agent</strong>
       </button>
-      <button class="mode-tile" data-mode="later">
+      <button class="mode-tile" data-mode="later" data-help-key="modeLater">
         <span>Later</span>
         <strong>Remind me</strong>
       </button>
-      <button class="mode-tile" data-mode="daily">
+      <button class="mode-tile" data-mode="daily" data-help-key="modeDaily">
         <span>Daily</span>
         <strong>Check in</strong>
       </button>
-      <button class="mode-tile" data-mode="advanced">
+      <button class="mode-tile" data-mode="advanced" data-help-key="modeAdvanced">
         <span>Advanced</span>
         <strong>Build flow</strong>
       </button>
@@ -47,23 +51,23 @@
           <h2>Chats</h2>
           <span id="sessionCount">0</span>
         </div>
-        <input id="sessionSearch" class="search" type="search" placeholder="Find chat">
-        <div id="sessionList" class="session-list"></div>
+        <input id="sessionSearch" class="search" type="search" placeholder="Find chat" data-help-key="sessionSearch">
+        <div id="sessionList" class="session-list" data-help-key="sessionList"></div>
       </aside>
 
       <section class="composer">
         <div class="panel-head">
           <h2 id="composerTitle">Tell agent now</h2>
-          <span id="selectedBadge">No chat</span>
+          <span id="selectedBadge" data-help-key="selectedBadge">No chat</span>
         </div>
 
         <div class="preset-row" id="presetRow"></div>
 
-        <label class="field-label" for="messageInput">Message</label>
-        <textarea id="messageInput" rows="8" spellcheck="true"></textarea>
+        <label class="field-label" for="messageInput" data-help-key="messageLabel">Message</label>
+        <textarea id="messageInput" rows="8" spellcheck="true" data-help-key="message"></textarea>
 
         <div class="simple-grid">
-          <label class="field">
+          <label class="field" data-help-key="when">
             <span>When</span>
             <select id="scheduleMode">
               <option value="now">Now</option>
@@ -73,55 +77,55 @@
               <option value="event">System event</option>
             </select>
           </label>
-          <label class="field schedule-control" data-schedule="at">
+          <label class="field schedule-control" data-schedule="at" data-help-key="runAt">
             <span>Run at</span>
             <input id="atInput" type="text" value="+30m">
           </label>
-          <label class="field schedule-control" data-schedule="every">
+          <label class="field schedule-control" data-schedule="every" data-help-key="every">
             <span>Every</span>
             <input id="everyInput" type="text" value="2h">
           </label>
-          <label class="field schedule-control" data-schedule="cron">
+          <label class="field schedule-control" data-schedule="cron" data-help-key="cron">
             <span>Cron</span>
             <input id="cronInput" type="text" value="0 9 * * *">
           </label>
-          <label class="field schedule-control" data-schedule="cron at">
+          <label class="field schedule-control" data-schedule="cron at" data-help-key="timezone">
             <span>Timezone</span>
             <input id="timezoneInput" type="text" value="Europe/Helsinki">
           </label>
         </div>
 
         <div class="delivery-row">
-          <label class="toggle">
+          <label class="toggle" data-help-key="deliver">
             <input id="deliverToggle" type="checkbox" checked>
             <span>Send answer back</span>
           </label>
-          <label class="toggle">
+          <label class="toggle" data-help-key="expectFinal">
             <input id="expectFinalToggle" type="checkbox" checked>
             <span>Wait for answer</span>
           </label>
-          <label class="toggle">
+          <label class="toggle" data-help-key="lightContext">
             <input id="lightContextToggle" type="checkbox">
             <span>Light context</span>
           </label>
         </div>
 
         <details id="advancedBox" class="advanced">
-          <summary>Advanced settings</summary>
+          <summary data-help-key="advancedSummary">Advanced settings</summary>
           <div class="advanced-grid">
-            <label class="field">
+            <label class="field" data-help-key="sessionKey">
               <span>Session key</span>
               <input id="sessionKeyInput" type="text">
             </label>
-            <label class="field">
+            <label class="field" data-help-key="replyChannel">
               <span>Reply channel</span>
               <input id="replyChannelInput" type="text" value="telegram">
             </label>
-            <label class="field">
+            <label class="field" data-help-key="replyTo">
               <span>Reply to</span>
               <input id="replyToInput" type="text">
             </label>
-            <label class="field">
+            <label class="field" data-help-key="thinking">
               <span>Thinking</span>
               <select id="thinkingInput">
                 <option value="xhigh">xhigh</option>
@@ -132,15 +136,15 @@
                 <option value="off">off</option>
               </select>
             </label>
-            <label class="field">
+            <label class="field" data-help-key="timeout">
               <span>Timeout seconds</span>
               <input id="timeoutInput" type="number" min="10" step="10" value="600">
             </label>
-            <label class="field">
+            <label class="field" data-help-key="tools">
               <span>Tools</span>
               <input id="toolsInput" type="text" placeholder="exec,read,write">
             </label>
-            <label class="field">
+            <label class="field" data-help-key="wake">
               <span>Wake</span>
               <select id="wakeInput">
                 <option value="">Default</option>
@@ -148,7 +152,7 @@
                 <option value="next-heartbeat">next-heartbeat</option>
               </select>
             </label>
-            <label class="field">
+            <label class="field" data-help-key="jobMode">
               <span>Job mode</span>
               <select id="jobModeInput">
                 <option value="agent">Agent message</option>
@@ -158,14 +162,14 @@
           </div>
         </details>
 
-        <div class="command-preview" id="commandPreview">Select a chat and write a message.</div>
+        <div class="command-preview" id="commandPreview" data-help-key="commandPreview">Select a chat and write a message.</div>
 
         <div class="action-row">
-          <button id="primaryAction" class="primary-button" disabled>Run now</button>
-          <button id="previewBtn" class="secondary-button" disabled>Preview command</button>
+          <button id="primaryAction" class="primary-button" disabled data-help-key="primaryAction">Run now</button>
+          <button id="previewBtn" class="secondary-button" disabled data-help-key="previewAction">Preview command</button>
         </div>
 
-        <pre id="resultBox" class="result-box" hidden></pre>
+        <pre id="resultBox" class="result-box" hidden data-help-key="result"></pre>
       </section>
 
       <aside class="side-panel">
@@ -174,18 +178,22 @@
             <h2>Jobs</h2>
             <span id="jobCount">0</span>
           </div>
-          <div id="jobsList" class="jobs-list"></div>
+          <div id="jobsList" class="jobs-list" data-help-key="jobs"></div>
         </section>
         <section>
           <div class="panel-head">
             <h2>Backend</h2>
             <span id="backendBadge">Local</span>
           </div>
-          <div id="checkList" class="checks"></div>
+          <div id="checkList" class="checks" data-help-key="backend"></div>
         </section>
       </aside>
     </section>
   </main>
-  <script src="./app.js?v=0.1.0" type="module"></script>
+  <div id="helpBubble" class="help-bubble" role="tooltip" hidden>
+    <div id="helpBubbleTitle" class="help-title"></div>
+    <div id="helpBubbleText" class="help-text"></div>
+  </div>
+  <script src="./app.js?v=0.2.0" type="module"></script>
 </body>
 </html>
