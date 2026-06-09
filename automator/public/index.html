@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenClaw Automator</title>
+  <link rel="stylesheet" href="./styles.css?v=0.1.0">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark">OC</div>
+        <div>
+          <h1>OpenClaw Automator</h1>
+          <p id="statusLine">Loading local OpenClaw state</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="refreshBtn" class="icon-button" title="Refresh state">Refresh</button>
+        <a id="gatewayLink" class="ghost-button" href="http://127.0.0.1:18789/" target="_blank" rel="noreferrer">Open Gateway</a>
+      </div>
+    </header>
+
+    <section class="hero-strip" aria-label="Quick flow">
+      <button class="mode-tile active" data-mode="now">
+        <span>Now</span>
+        <strong>Tell agent</strong>
+      </button>
+      <button class="mode-tile" data-mode="later">
+        <span>Later</span>
+        <strong>Remind me</strong>
+      </button>
+      <button class="mode-tile" data-mode="daily">
+        <span>Daily</span>
+        <strong>Check in</strong>
+      </button>
+      <button class="mode-tile" data-mode="advanced">
+        <span>Advanced</span>
+        <strong>Build flow</strong>
+      </button>
+    </section>
+
+    <section class="workspace">
+      <aside class="sessions-panel">
+        <div class="panel-head">
+          <h2>Chats</h2>
+          <span id="sessionCount">0</span>
+        </div>
+        <input id="sessionSearch" class="search" type="search" placeholder="Find chat">
+        <div id="sessionList" class="session-list"></div>
+      </aside>
+
+      <section class="composer">
+        <div class="panel-head">
+          <h2 id="composerTitle">Tell agent now</h2>
+          <span id="selectedBadge">No chat</span>
+        </div>
+
+        <div class="preset-row" id="presetRow"></div>
+
+        <label class="field-label" for="messageInput">Message</label>
+        <textarea id="messageInput" rows="8" spellcheck="true"></textarea>
+
+        <div class="simple-grid">
+          <label class="field">
+            <span>When</span>
+            <select id="scheduleMode">
+              <option value="now">Now</option>
+              <option value="at">Once later</option>
+              <option value="every">Repeat</option>
+              <option value="cron">Cron</option>
+              <option value="event">System event</option>
+            </select>
+          </label>
+          <label class="field schedule-control" data-schedule="at">
+            <span>Run at</span>
+            <input id="atInput" type="text" value="+30m">
+          </label>
+          <label class="field schedule-control" data-schedule="every">
+            <span>Every</span>
+            <input id="everyInput" type="text" value="2h">
+          </label>
+          <label class="field schedule-control" data-schedule="cron">
+            <span>Cron</span>
+            <input id="cronInput" type="text" value="0 9 * * *">
+          </label>
+          <label class="field schedule-control" data-schedule="cron at">
+            <span>Timezone</span>
+            <input id="timezoneInput" type="text" value="Europe/Helsinki">
+          </label>
+        </div>
+
+        <div class="delivery-row">
+          <label class="toggle">
+            <input id="deliverToggle" type="checkbox" checked>
+            <span>Send answer back</span>
+          </label>
+          <label class="toggle">
+            <input id="expectFinalToggle" type="checkbox" checked>
+            <span>Wait for answer</span>
+          </label>
+          <label class="toggle">
+            <input id="lightContextToggle" type="checkbox">
+            <span>Light context</span>
+          </label>
+        </div>
+
+        <details id="advancedBox" class="advanced">
+          <summary>Advanced settings</summary>
+          <div class="advanced-grid">
+            <label class="field">
+              <span>Session key</span>
+              <input id="sessionKeyInput" type="text">
+            </label>
+            <label class="field">
+              <span>Reply channel</span>
+              <input id="replyChannelInput" type="text" value="telegram">
+            </label>
+            <label class="field">
+              <span>Reply to</span>
+              <input id="replyToInput" type="text">
+            </label>
+            <label class="field">
+              <span>Thinking</span>
+              <select id="thinkingInput">
+                <option value="xhigh">xhigh</option>
+                <option value="high">high</option>
+                <option value="medium">medium</option>
+                <option value="low">low</option>
+                <option value="minimal">minimal</option>
+                <option value="off">off</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Timeout seconds</span>
+              <input id="timeoutInput" type="number" min="10" step="10" value="600">
+            </label>
+            <label class="field">
+              <span>Tools</span>
+              <input id="toolsInput" type="text" placeholder="exec,read,write">
+            </label>
+            <label class="field">
+              <span>Wake</span>
+              <select id="wakeInput">
+                <option value="">Default</option>
+                <option value="now">now</option>
+                <option value="next-heartbeat">next-heartbeat</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Job mode</span>
+              <select id="jobModeInput">
+                <option value="agent">Agent message</option>
+                <option value="system-event">System event</option>
+              </select>
+            </label>
+          </div>
+        </details>
+
+        <div class="command-preview" id="commandPreview">Select a chat and write a message.</div>
+
+        <div class="action-row">
+          <button id="primaryAction" class="primary-button" disabled>Run now</button>
+          <button id="previewBtn" class="secondary-button" disabled>Preview command</button>
+        </div>
+
+        <pre id="resultBox" class="result-box" hidden></pre>
+      </section>
+
+      <aside class="side-panel">
+        <section>
+          <div class="panel-head">
+            <h2>Jobs</h2>
+            <span id="jobCount">0</span>
+          </div>
+          <div id="jobsList" class="jobs-list"></div>
+        </section>
+        <section>
+          <div class="panel-head">
+            <h2>Backend</h2>
+            <span id="backendBadge">Local</span>
+          </div>
+          <div id="checkList" class="checks"></div>
+        </section>
+      </aside>
+    </section>
+  </main>
+  <script src="./app.js?v=0.1.0" type="module"></script>
+</body>
+</html>
