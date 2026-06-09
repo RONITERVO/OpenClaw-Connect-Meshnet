@@ -18,7 +18,7 @@ const auditPath = join(stateDir, "automation-log.jsonl");
 const defaultGatewayHttp = process.env.OPENCLAW_AUTOMATOR_GATEWAY_HTTP || "http://127.0.0.1:18789";
 const openclawCommand = process.env.OPENCLAW_BIN || (process.platform === "win32" ? "openclaw.cmd" : "openclaw");
 const openclawMjs = process.env.APPDATA ? join(process.env.APPDATA, "npm", "node_modules", "openclaw", "openclaw.mjs") : "";
-const appVersion = "0.4.9";
+const appVersion = "0.4.10";
 
 const contentTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -235,7 +235,9 @@ function workflowStepLabel(step) {
 }
 
 function workflowEvent(workflow, type, detail = {}) {
-  const step = detail.step || activeWorkflowStep(workflow);
+  const step = detail.step
+    || (Number.isInteger(detail.stepIndex) ? workflow.steps?.[detail.stepIndex] : null)
+    || activeWorkflowStep(workflow);
   const clean = {
     id: randomUUID(),
     at: new Date().toISOString(),
@@ -1223,6 +1225,19 @@ async function handleApi(req, res, pathname) {
     }
     jsonResponse(res, 200, await buildWorkflowLog(workflow));
     return;
+  }
+  if (req.method === "GET" && pathname.startsWith("/api/workflows/")) {
+    const parts = pathname.split("/");
+    if (parts.length === 4 && parts[3]) {
+      const id = decodeURIComponent(parts[3] || "");
+      const workflow = await readWorkflow(id);
+      if (!workflow) {
+        errorResponse(res, 404, "Workflow not found.");
+        return;
+      }
+      jsonResponse(res, 200, await buildWorkflowLog(workflow));
+      return;
+    }
   }
   if (req.method === "POST" && pathname === "/api/settings") {
     const body = await readJsonBody(req);
