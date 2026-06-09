@@ -259,7 +259,7 @@ const helpCatalog = {
   workflowStepPlan: {
     title: "Step plan controller",
     simple: "Let one repeating job move through steps.",
-    detailed: "For Every and cron-expression jobs, the backend stores the Step plan and creates a self-updating workflow controller. Each run receives only the current step. The step advances only after the agent reports the current step complete through the local controller endpoint at 127.0.0.1:18890. Failed or blocked steps do not advance.",
+    detailed: "For Every and cron-expression jobs, the backend stores the Step plan and creates a self-updating workflow controller. Each run receives only the current step and a focused event-log URL. Previous and future rows stay out of the cron prompt. The step advances only after the agent reports the current step complete through the local controller endpoint at 127.0.0.1:18890. Failed or blocked steps do not advance.",
   },
   workflowName: {
     title: "Workflow",
@@ -269,7 +269,7 @@ const helpCatalog = {
   workflowSteps: {
     title: "Step plan",
     simple: "Fill one row for each step.",
-    detailed: "Each row has Step name, Next action, Done when, and State note. The app sends these as structured data to the backend, so users do not need to type separators or session syntax. Each repeating cron run receives only the active row plus an advance/blocked reporting command.",
+    detailed: "Each row has Step name, Next action, Done when, and State note. The app sends these as structured data to the backend, so users do not need to type separators or session syntax. Each repeating cron run receives only the active row, a read-only past-events link, and an advance/blocked reporting command.",
   },
   workflowAddStep: {
     title: "Add row",
@@ -425,6 +425,11 @@ const helpCatalog = {
     title: "Jobs",
     simple: "Scheduled things show up here.",
     detailed: "Loaded from openclaw cron list --json. This panel is read-only in this version; edit or remove jobs with OpenClaw CLI if needed.",
+  },
+  workflowLog: {
+    title: "Past events log",
+    simple: "Open the focused history for this workflow.",
+    detailed: "This opens Automator's workflow event log. The log is written by the backend from controller transitions and matching local OpenClaw transcript/trajectory artifacts, similar to Agent Home collection. Agents do not write log entries. They can inspect this page only when the active-row prompt lacks enough history, without every cron prompt carrying all previous or future steps.",
   },
   jobRow: {
     title: "Job",
@@ -872,6 +877,12 @@ function renderJobs() {
       <strong>${escapeHtml(job.name || job.id || "OpenClaw job")}</strong>
       <span>${escapeHtml(jobScheduleLabel(job))}</span>
       <small>${escapeHtml([job.status, job.delivery?.mode, job.sessionTarget, job.wakeMode].filter(Boolean).join(" / "))}</small>
+      ${job.workflow?.id ? `
+        <div class="job-actions">
+          <a href="${escapeHtml(job.workflow.logUrl || `/workflows/${job.workflow.id}/events.txt`)}" target="_blank" rel="noreferrer" data-help-key="workflowLog">Past events log</a>
+          <small>${escapeHtml([job.workflow.status, `${job.workflow.eventCount || 0} events`].filter(Boolean).join(" / "))}</small>
+        </div>
+      ` : ""}
     </div>
   `).join("") || `<div class="empty">No cron jobs yet</div>`;
 }

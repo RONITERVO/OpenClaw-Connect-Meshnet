@@ -31,6 +31,7 @@ What it does:
 - supports advanced settings for job name/description, enabled state, session key, reply target, agent/model override, thinking level, timeout, tools, webhook delivery, stagger/exact cron timing, wake mode, and system-event flows
 - shows an always-visible safety check when context, cron session, and reply destination do not line up
 - can use a spreadsheet-style step-plan controller that advances one repeating cron only after the agent reports the active step complete
+- keeps previous/future workflow rows out of cron prompts while exposing a focused read-only past-events log for the agent and user
 - shows delayed contextual labels after a 5-second hover, with Simple and Detailed modes
 - links known OpenClaw flags inside Detailed labels to the relevant official docs pages
 - keeps an opened label visible while you move to its docs links, until you click `x`, click elsewhere, or press Escape
