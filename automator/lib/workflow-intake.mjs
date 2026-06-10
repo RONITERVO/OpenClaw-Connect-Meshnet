@@ -179,6 +179,13 @@ function workflowIntakeApprovalCode() {
   return `WF-${randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase()}`;
 }
 
+function optionalTokenBudget(value) {
+  if (value == null || value === "" || value === false) return null;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return null;
+  return Math.floor(number);
+}
+
 function publicWorkflowIntakeApproval(approval) {
   if (!approval) return null;
   const phrase = `approve workflow ${approval.code}`;
@@ -209,6 +216,7 @@ function workflowIntakeCreateRequestTemplate(draft, approval = null) {
     enabled: draft.enabled,
     disabled: draft.disabled,
     allowEnable: draft.enabled === true,
+    tokenBudget: draft.tokenBudget,
     userConfirmed: true,
     approvalId: approval?.id || "<approval.id>",
     approvalCode: approval?.code || "<approval.code>",
@@ -394,6 +402,7 @@ function buildWorkflowIntake(body, settings) {
   const delivery = objectValue(body.delivery);
   const workflowBody = objectValue(body.workflow);
   const plan = objectValue(body.plan);
+  const budget = objectValue(body.budget);
   const hint = optionalText(body.hint || body.userHint || body.request || body.originalMessage, 3000);
   const baseMessage = optionalText(
     body.baseMessage || body.message || body.prompt || workflowBody.baseMessage || hint,
@@ -419,6 +428,7 @@ function buildWorkflowIntake(body, settings) {
   let replyTo = optionalText(body.replyTo || body.to || delivery.to, 300);
   const webhook = optionalText(body.webhook || delivery.webhook, 1000);
   const steps = parseWorkflowSteps(body.steps || workflowBody.steps || plan.steps);
+  const tokenBudget = optionalTokenBudget(body.tokenBudget ?? budget.tokenBudget ?? workflowBody.tokenBudget);
   const explicitQuestions = normalizeQuestionList(body.questions);
   const confirmed = body.userConfirmed === true || body.confirm === true;
   const wantsEnabled = body.enabled === true || body.disabled === false || body.enableAfterCreate === true;
@@ -491,6 +501,7 @@ function buildWorkflowIntake(body, settings) {
     model: optionalText(body.model, 200),
     thinking: normalizeThinking(body.thinking, settings.defaultThinking),
     timeoutSeconds: Number(body.timeoutSeconds || settings.defaultTimeoutSeconds),
+    tokenBudget,
     tools: Array.isArray(body.tools) ? body.tools.slice(0, 20).map((item) => optionalText(item, 80)).filter(Boolean) : optionalText(body.tools, 500),
     stagger: optionalText(body.stagger, 40),
     wake: optionalText(body.wake, 40),
@@ -500,6 +511,7 @@ function buildWorkflowIntake(body, settings) {
       name,
       source: "agent-workflow-intake",
       intakeHint: hint,
+      tokenBudget,
       steps,
     },
   };
@@ -517,6 +529,8 @@ function buildWorkflowIntake(body, settings) {
       baseMessage,
       currentIndex: 0,
       steps,
+      tokenBudget,
+      tokensUsed: 0,
     };
     controllerMessagePreview = workflowStepMessage(previewWorkflow);
     addCommandPreview = displayCommand(cronArgs({ ...draft, enabled: false, disabled: true, message: controllerMessagePreview }, settings));
@@ -584,6 +598,7 @@ function workflowIntakeSchema() {
       sessionKey: "OpenClaw session key used as context.",
       name: "Workflow/job name.",
       baseMessage: "Overall goal shown before the active step.",
+      tokenBudget: "Optional positive integer token budget shown in the generated active-row prompt. Omit for none/unbounded.",
       scheduleMode: "every or cron",
       every: "Interval such as 2h. Required when scheduleMode is every.",
       cron: "Cron expression. Required when scheduleMode is cron.",

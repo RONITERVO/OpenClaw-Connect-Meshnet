@@ -6,7 +6,9 @@ export const automatorRoot = fileURLToPath(new URL("..", import.meta.url));
 export const appRoot = resolve(automatorRoot, "..");
 export const publicDir = join(automatorRoot, "public");
 export const port = Number(process.env.OPENCLAW_AUTOMATOR_PORT || 18890);
-export const stateDir = join(homedir(), ".openclaw", "automator");
+export const stateDir = process.env.OPENCLAW_AUTOMATOR_STATE_DIR
+  ? resolve(process.env.OPENCLAW_AUTOMATOR_STATE_DIR)
+  : join(homedir(), ".openclaw", "automator");
 export const workflowsDir = join(stateDir, "workflows");
 export const settingsPath = join(stateDir, "settings.json");
 export const auditPath = join(stateDir, "automation-log.jsonl");

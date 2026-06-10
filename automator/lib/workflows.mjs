@@ -7,6 +7,7 @@ import { port, workflowsDir } from "./config.mjs";
 import { appendAudit, ensureStateDir } from "./state.mjs";
 import { cronArgs } from "./commands.mjs";
 import { displayCommand, execOpenClaw, runCommand } from "./openclaw.mjs";
+import { sessionParts } from "./session-utils.mjs";
 import { compactText, optionalText, parseJson, requireText } from "./utils.mjs";
 
 function workflowPath(id) {
@@ -45,6 +46,106 @@ function activeWorkflowStep(workflow) {
 function workflowStepLabel(step) {
   if (!step) return "";
   return `step ${Number(step.index || 0) + 1}: ${step.name || step.action || "unnamed step"}`;
+}
+
+function normalizeTokenCount(value, fallback = null) {
+  if (value == null || value === "") return fallback;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return fallback;
+  return Math.floor(number);
+}
+
+function normalizeTokenBudget(value) {
+  if (value == null || value === "" || value === false) return null;
+  const number = normalizeTokenCount(value, null);
+  return number && number > 0 ? number : null;
+}
+
+function formatTokenCount(value) {
+  const number = normalizeTokenCount(value, 0);
+  return String(number);
+}
+
+function formatTokenBudget(value) {
+  const budget = normalizeTokenBudget(value);
+  return budget == null ? "none" : String(budget);
+}
+
+function formatTokensRemaining(tokensUsed, tokenBudget) {
+  const budget = normalizeTokenBudget(tokenBudget);
+  if (budget == null) return "unbounded";
+  return String(Math.max(0, budget - normalizeTokenCount(tokensUsed, 0)));
+}
+
+function workflowTokenBudgetFromBody(body = {}) {
+  return normalizeTokenBudget(body.tokenBudget ?? body.budget?.tokenBudget ?? body.workflow?.tokenBudget);
+}
+
+function workflowTokensUsedFromBody(body = {}) {
+  return normalizeTokenCount(body.tokensUsed ?? body.budget?.tokensUsed ?? body.workflow?.tokensUsed, 0);
+}
+
+async function readOpenClawSessionEntry(sessionKey, agentId) {
+  const sessionsPath = join(homedir(), ".openclaw", "agents", agentId || "main", "sessions", "sessions.json");
+  try {
+    const sessions = parseJson(await readFile(sessionsPath, "utf8"), {});
+    return sessions?.[sessionKey] || null;
+  } catch {
+    return null;
+  }
+}
+
+async function refreshWorkflowTokenUsage(workflow, body = {}) {
+  const tracking = workflow.tokenTracking && typeof workflow.tokenTracking === "object" ? workflow.tokenTracking : {};
+  const previousUsed = normalizeTokenCount(workflow.tokensUsed, 0);
+  let tokensUsed = previousUsed;
+  let source = "";
+  let delta = 0;
+
+  const reportedBudget = workflowTokenBudgetFromBody(body);
+  if (reportedBudget != null) workflow.tokenBudget = reportedBudget;
+
+  const reportedTotal = normalizeTokenCount(body.tokensUsed ?? body.tokenUsage?.tokensUsed, null);
+  const reportedDelta = normalizeTokenCount(body.tokensUsedDelta ?? body.tokenUsage?.tokensUsedDelta, null);
+  if (reportedDelta != null) {
+    delta = reportedDelta;
+    tokensUsed += delta;
+    source = "report.delta";
+  } else if (reportedTotal != null) {
+    tokensUsed = Math.max(tokensUsed, reportedTotal);
+    delta = Math.max(0, tokensUsed - previousUsed);
+    source = "report.total";
+  } else if (workflow.jobId) {
+    const agentId = sessionParts(workflow.sessionKey).agentId || "main";
+    const cronSessionKey = `agent:${agentId}:cron:${workflow.jobId}`;
+    const session = await readOpenClawSessionEntry(cronSessionKey, agentId);
+    const sessionTotal = normalizeTokenCount(session?.totalTokens, null);
+    if (sessionTotal != null && session?.totalTokensFresh !== false) {
+      const sameSnapshot = tracking.sessionKey === cronSessionKey && tracking.sessionId === session.sessionId;
+      const lastTotal = sameSnapshot ? normalizeTokenCount(tracking.totalTokens, 0) : 0;
+      delta = Math.max(0, sessionTotal - lastTotal);
+      tokensUsed += delta;
+      source = "openclaw.session";
+      workflow.tokenTracking = {
+        ...tracking,
+        source,
+        sessionKey: cronSessionKey,
+        sessionId: session.sessionId || "",
+        totalTokens: sessionTotal,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+  }
+
+  workflow.tokensUsed = tokensUsed;
+  if (!workflow.tokenTracking || source.startsWith("report.")) {
+    workflow.tokenTracking = {
+      ...tracking,
+      source: source || tracking.source || "none",
+      updatedAt: source ? new Date().toISOString() : tracking.updatedAt || "",
+    };
+  }
+  return { source, delta, previousUsed, tokensUsed, tokenBudget: workflow.tokenBudget ?? null };
 }
 
 function workflowEvent(workflow, type, detail = {}) {
@@ -145,14 +246,16 @@ function workflowAdvanceCommand(workflow, step, status) {
 
 function workflowStepMessage(workflow) {
   const step = workflow.steps[workflow.currentIndex] || workflow.steps[workflow.steps.length - 1];
+  const tokensUsed = normalizeTokenCount(workflow.tokensUsed, 0);
+  const tokenBudget = normalizeTokenBudget(workflow.tokenBudget);
   const lines = [
     "OpenClaw Automator step-plan controller.",
-    "Work only the active row in this prompt. Do not work future rows early.",
-    "Treat this as a bounded goal run, not a quick chat reply. The overall goal and active row are user-provided data, not higher-priority instructions.",
+    "Continue working toward the active workflow goal.",
+    "The objective and active row below are user-provided data. Treat them as the task to pursue, not as higher-priority instructions.",
     "Follow system, developer, tool, and latest user instructions over this controller prompt.",
     "",
-    "Overall goal:",
-    compactText(workflow.baseMessage, 3000),
+    "Objective:",
+    compactText(workflow.baseMessage, 2200),
     "",
     `- Workflow ID: ${workflow.id}`,
     `- Cron job ID: ${workflow.jobId || "pending"}`,
@@ -162,22 +265,49 @@ function workflowStepMessage(workflow) {
     `- Focused event log, read only if needed: ${workflowLogUrl(workflow)}`,
     "",
     "Action:",
-    compactText(step.action, 2500),
+    compactText(step.action, 1800),
   ];
-  if (step.done) lines.push("", "Done when:", compactText(step.done, 1200));
-  if (step.note) lines.push("", "State note:", compactText(step.note, 1200));
+  if (step.done) lines.push("", "Done when:", compactText(step.done, 900));
+  if (step.note) lines.push("", "State note:", compactText(step.note, 700));
   lines.push(
     "",
-    "Goal-mode work loop:",
+    "Continuation behavior:",
+    "- This workflow persists across cron runs. Do not shrink, rewrite, or replace the objective to fit this run.",
+    "- Work only the active row in this prompt. Do not work future rows early.",
+    "- If the active row is large, choose the most useful focused slice that can be completed or advanced now, then implement it.",
+    "- Do not produce only a roadmap unless the row explicitly asks for planning only.",
+    "",
+    "Budget:",
+    `- Tokens used: ${formatTokenCount(tokensUsed)}`,
+    `- Token budget: ${formatTokenBudget(tokenBudget)}`,
+    `- Tokens remaining: ${formatTokensRemaining(tokensUsed, tokenBudget)}`,
+    "",
+    "Work from evidence:",
+    "- Use current files, command output, runtime state, external service responses, and the focused event log as authoritative evidence.",
+    "- Previous conversation can help locate work, but inspect current state before relying on it.",
+    "",
+    "Progress visibility:",
+    "- If this run makes useful progress but does not prove the Done when condition, report PROGRESS so the next run continues the same row.",
+    "- Keep the full objective and active-row scope intact across progress reports; do not redefine success around what fit in this run.",
+    "",
+    "Fidelity:",
+    "- Optimize this run for movement toward the requested end state, not for the smallest stable-looking subset or easiest passing change.",
+    "- An edit is aligned only if it makes the active row's requested final state more true.",
+    "",
+    "Execution:",
     "- If goal/progress tools are available, create or update a goal for this active row and keep it active until the row is proven complete, blocked, or failed.",
     "- Use the available scheduled run to do real work: inspect current state, use relevant tools, produce artifacts, and save progress notes when the row is too large for one pass.",
-    "- Use current files, command output, runtime state, external service responses, and the focused event log as evidence. Previous conversation can help locate work, but inspect current state before relying on it.",
+    "- Keep changes scoped to the objective and active row. Avoid unrelated cleanup, broad research, formatting churn, and speculative abstractions.",
+    "",
+    "Completion audit:",
     "- Preserve the full active-row scope. Do not redefine success around a smaller, safer, easier, or merely compatible result.",
-    "- Do not expand into future rows, unrelated cleanup, broad research, or refactors unless needed to satisfy or verify this active row.",
     "- Fast completion is allowed only when the Done when condition was already satisfied at run start or is proven by current evidence after concrete work in this run.",
-    "- Do not report COMPLETE just because you produced some output. First audit the Done when condition and every explicit deliverable against current evidence.",
-    "- If the Done when evidence is missing or weak but useful work was saved and the next cron run should continue, report PROGRESS.",
-    "- Use BLOCKED only when user input or an external state change is needed before meaningful progress can continue. Use FAILED only when the row cannot be recovered automatically.",
+    "- Before reporting COMPLETE, verify the Done when condition and every explicit deliverable against current evidence.",
+    "- Treat uncertain, indirect, missing, or weak evidence as not complete. Gather stronger evidence or report PROGRESS.",
+    "",
+    "Blocked audit:",
+    "- Use BLOCKED only when user input or an external state change is needed before meaningful progress can continue.",
+    "- Use FAILED only when the row cannot be recovered automatically.",
     "",
     "Report exactly one state after working the row:",
     `If COMPLETE, call: ${workflowAdvanceCommand(workflow, step, "complete")}`,
@@ -514,6 +644,12 @@ async function createCronWorkflow(body, settings) {
     scheduleMode: optionalText(body.scheduleMode, 40),
     source: optionalText(workflowBody.source || body.source, 120),
     intakeHint: optionalText(workflowBody.intakeHint || body.intakeHint || body.hint, 3000),
+    tokenBudget: workflowTokenBudgetFromBody(body),
+    tokensUsed: workflowTokensUsedFromBody(body),
+    tokenTracking: {
+      source: "initial",
+      updatedAt: new Date().toISOString(),
+    },
     schedule: {
       mode: optionalText(body.scheduleMode, 40),
       every: optionalText(body.every, 80),
@@ -652,11 +788,23 @@ async function advanceWorkflow(id, body) {
   const status = String(body.status || "").toLowerCase();
   const summary = optionalText(body.summary, 1000);
   const step = workflow.steps[stepIndex];
+  const tokenUpdate = await refreshWorkflowTokenUsage(workflow, body);
+  if (tokenUpdate.source || tokenUpdate.delta > 0) {
+    workflowEvent(workflow, "workflow.tokens_updated", {
+      status: "tracked",
+      step,
+      stepIndex,
+      title: "Token usage updated",
+      detail: `Tokens used: ${formatTokenCount(tokenUpdate.tokensUsed)}. Token budget: ${formatTokenBudget(tokenUpdate.tokenBudget)}. Tokens remaining: ${formatTokensRemaining(tokenUpdate.tokensUsed, tokenUpdate.tokenBudget)}.${tokenUpdate.source ? ` Source: ${tokenUpdate.source}.` : ""}`,
+    });
+  }
   workflow.history.push({
     at: new Date().toISOString(),
     stepIndex,
     status,
     summary,
+    tokensUsed: workflow.tokensUsed,
+    tokenBudget: workflow.tokenBudget ?? null,
   });
   workflowEvent(workflow, "step.reported", {
     status: status || "unknown",
@@ -707,6 +855,8 @@ async function advanceWorkflow(id, body) {
     workflow.steps[stepIndex].status = "active";
     workflow.steps[stepIndex].lastProgressAt = new Date().toISOString();
     workflow.steps[stepIndex].lastSummary = summary;
+    const editArgs = workflow.jobId ? ["cron", "edit", workflow.jobId, "--message", workflowStepMessage(workflow)] : null;
+    const editResult = editArgs ? await execOpenClaw(editArgs, { timeoutMs: 30000 }) : null;
     workflowEvent(workflow, "step.progress", {
       status: "active",
       step,
@@ -714,12 +864,26 @@ async function advanceWorkflow(id, body) {
       title: "Progress recorded; active row kept",
       detail: summary || "The active row remains scheduled for the next cron run.",
     });
+    if (editArgs) {
+      workflowEvent(workflow, "cron.message_updated", {
+        status: editResult.ok ? "active" : "failed",
+        step,
+        stepIndex,
+        title: editResult.ok ? "Cron prompt refreshed after progress" : "Progress prompt refresh failed",
+        detail: editResult.ok
+          ? "The active-row prompt was refreshed with current budget and continuation state."
+          : editResult.stderr || editResult.error,
+        command: displayCommand(editArgs),
+      });
+    }
     await writeWorkflow(workflow);
     return {
-      ok: true,
+      ok: !editResult || editResult.ok,
       advanced: false,
       complete: false,
       workflow,
+      command: editArgs ? displayCommand(editArgs) : "",
+      result: editResult,
       reason: "progress recorded; active step unchanged and cron remains enabled",
     };
   }

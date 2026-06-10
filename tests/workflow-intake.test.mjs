@@ -115,11 +115,17 @@ No --agent specified; the job will run with the configured default agent.`;
   });
   assert.equal(previewIntake.mode, "needs_confirmation");
   assert.match(previewIntake.controllerMessagePreview, /OpenClaw Automator step-plan controller/);
-  assert.match(previewIntake.controllerMessagePreview, /Work only the active row/);
-  assert.match(previewIntake.controllerMessagePreview, /bounded goal run/);
+  assert.match(previewIntake.controllerMessagePreview, /Continue working toward the active workflow goal/);
   assert.match(previewIntake.controllerMessagePreview, /user-provided data/);
-  assert.match(previewIntake.controllerMessagePreview, /Goal-mode work loop/);
+  assert.match(previewIntake.controllerMessagePreview, /Continuation behavior/);
+  assert.match(previewIntake.controllerMessagePreview, /Work only the active row/);
+  assert.match(previewIntake.controllerMessagePreview, /Budget:/);
+  assert.match(previewIntake.controllerMessagePreview, /Tokens used: 0/);
+  assert.match(previewIntake.controllerMessagePreview, /Token budget: none/);
+  assert.match(previewIntake.controllerMessagePreview, /Tokens remaining: unbounded/);
   assert.match(previewIntake.controllerMessagePreview, /current state before relying on it|current files, command output, runtime state/);
+  assert.match(previewIntake.controllerMessagePreview, /Progress visibility/);
+  assert.match(previewIntake.controllerMessagePreview, /Fidelity/);
   assert.match(previewIntake.controllerMessagePreview, /Preserve the full active-row scope/);
   assert.match(previewIntake.controllerMessagePreview, /explicit deliverable/);
   assert.doesNotMatch(previewIntake.controllerMessagePreview, /Supervisor-run validation|benchmarking|D:ProjectsOpenClawopenclawClickStart/);
@@ -127,6 +133,17 @@ No --agent specified; the job will run with the configured default agent.`;
   assert.match(previewIntake.controllerMessagePreview, /If COMPLETE, call:/);
   assert.match(previewIntake.controllerMessagePreview, /If PROGRESS, call:/);
   assert.match(previewIntake.controllerMessagePreview, /PROGRESS holds this row and keeps the cron scheduled/);
+}
+
+{
+  const previewIntake = preview({
+    ...baseRequest,
+    tokenBudget: 25000,
+  });
+  assert.equal(previewIntake.draft.tokenBudget, 25000);
+  assert.equal(previewIntake.draft.workflow.tokenBudget, 25000);
+  assert.match(previewIntake.controllerMessagePreview, /Token budget: 25000/);
+  assert.match(previewIntake.controllerMessagePreview, /Tokens remaining: 25000/);
 }
 
 console.log("workflow-intake tests passed");
