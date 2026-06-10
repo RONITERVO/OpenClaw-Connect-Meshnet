@@ -1,0 +1,15 @@
+function sessionParts(key = "") {
+  const raw = String(key);
+  const parts = raw.split(":");
+  return {
+    raw,
+    agentId: parts[1] || "main",
+    surface: parts[2] || "main",
+    scope: parts[3] || "",
+    target: parts.slice(4).join(":"),
+  };
+}
+
+export {
+  sessionParts,
+};
