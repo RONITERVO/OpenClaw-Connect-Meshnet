@@ -1,7 +1,8 @@
 function sessionParts(key = "") {
-  const parts = String(key).split(":");
+  const raw = String(key);
+  const parts = raw.split(":");
   return {
-    raw: key,
+    raw,
     agentId: parts[1] || "main",
     surface: parts[2] || "main",
     scope: parts[3] || "",

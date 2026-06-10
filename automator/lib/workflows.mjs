@@ -1,23 +1,43 @@
 import { randomUUID } from "node:crypto";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { port, workflowsDir } from "./config.mjs";
-import { appendAudit, ensureStateDir } from "./state.mjs";
+import { appendAudit, ensureStateDir, writeJsonFileAtomic } from "./state.mjs";
 import { cronArgs } from "./commands.mjs";
 import { displayCommand, execOpenClaw, runCommand } from "./openclaw.mjs";
 import { sessionParts } from "./session-utils.mjs";
-import { compactText, optionalText, parseJson, requireText } from "./utils.mjs";
+import { compactText, optionalText, parseJson, pathIsInside, readTextTail, requireText } from "./utils.mjs";
 
 function workflowPath(id) {
-  const safe = String(id || "").replace(/[^a-zA-Z0-9_-]/g, "");
-  if (!safe) {
-    const error = new Error("Workflow id is required.");
+  const safe = String(id || "");
+  if (!/^[a-zA-Z0-9_-]+$/.test(safe)) {
+    const error = new Error(safe ? "Workflow id is invalid." : "Workflow id is required.");
     error.status = 400;
     throw error;
   }
   return join(workflowsDir, `${safe}.json`);
+}
+
+const workflowLocks = new Map();
+
+async function withWorkflowLock(id, task) {
+  const key = String(id || "");
+  const previous = workflowLocks.get(key) || Promise.resolve();
+  let release;
+  const current = new Promise((resolve) => {
+    release = resolve;
+  });
+  const next = previous.catch(() => {}).then(() => current);
+  workflowLocks.set(key, next);
+  await previous.catch(() => {});
+  try {
+    return await task();
+  } finally {
+    release();
+    if (workflowLocks.get(key) === next) workflowLocks.delete(key);
+  }
 }
 
 async function readWorkflow(id) {
@@ -31,7 +51,7 @@ async function readWorkflow(id) {
 async function writeWorkflow(workflow) {
   await ensureStateDir();
   workflow.updatedAt = new Date().toISOString();
-  await writeFile(workflowPath(workflow.id), `${JSON.stringify(workflow, null, 2)}\n`, "utf8");
+  await writeJsonFileAtomic(workflowPath(workflow.id), workflow);
   return workflow;
 }
 
@@ -39,8 +59,22 @@ function workflowLogUrl(workflow) {
   return `http://127.0.0.1:${port}/workflows/${workflow.id}/events.txt`;
 }
 
+function ensureWorkflowSteps(workflow) {
+  workflow.steps = Array.isArray(workflow.steps) ? workflow.steps : [];
+  workflow.history = Array.isArray(workflow.history) ? workflow.history : [];
+  workflow.events = Array.isArray(workflow.events) ? workflow.events : [];
+  if (!workflow.steps.length) {
+    const error = new Error("Workflow has no step rows.");
+    error.status = 400;
+    throw error;
+  }
+  if (!Number.isInteger(workflow.currentIndex) || workflow.currentIndex < 0) workflow.currentIndex = 0;
+  return workflow.steps;
+}
+
 function activeWorkflowStep(workflow) {
-  return workflow.steps?.[workflow.currentIndex] || workflow.steps?.[workflow.steps.length - 1] || null;
+  const steps = Array.isArray(workflow.steps) ? workflow.steps : [];
+  return steps[workflow.currentIndex] || steps[steps.length - 1] || null;
 }
 
 function workflowStepLabel(step) {
@@ -86,7 +120,10 @@ function workflowTokensUsedFromBody(body = {}) {
 }
 
 async function readOpenClawSessionEntry(sessionKey, agentId) {
-  const sessionsPath = join(homedir(), ".openclaw", "agents", agentId || "main", "sessions", "sessions.json");
+  const agentsDir = join(homedir(), ".openclaw", "agents");
+  const sessionsDir = resolve(agentsDir, agentId || "main", "sessions");
+  if (!pathIsInside(agentsDir, sessionsDir)) return null;
+  const sessionsPath = join(sessionsDir, "sessions.json");
   try {
     const sessions = parseJson(await readFile(sessionsPath, "utf8"), {});
     return sessions?.[sessionKey] || null;
@@ -146,6 +183,20 @@ async function refreshWorkflowTokenUsage(workflow, body = {}) {
     };
   }
   return { source, delta, previousUsed, tokensUsed, tokenBudget: workflow.tokenBudget ?? null };
+}
+
+function recordWorkflowTokenEvent(workflow, tokenUpdate, detail = {}) {
+  if (!tokenUpdate?.source && !(tokenUpdate?.delta > 0)) return null;
+  return workflowEvent(workflow, "workflow.tokens_updated", {
+    status: "tracked",
+    title: "Token usage updated",
+    detail: `Tokens used: ${formatTokenCount(tokenUpdate.tokensUsed)}. Token budget: ${formatTokenBudget(tokenUpdate.tokenBudget)}. Tokens remaining: ${formatTokensRemaining(tokenUpdate.tokensUsed, tokenUpdate.tokenBudget)}.${tokenUpdate.source ? ` Source: ${tokenUpdate.source}.` : ""}`,
+    ...detail,
+  });
+}
+
+function workflowNeedsDisableRetry(workflow) {
+  return workflow?.jobId && ["advance_failed", "complete_disable_failed"].includes(workflow.status);
 }
 
 function workflowEvent(workflow, type, detail = {}) {
@@ -241,11 +292,13 @@ function workflowAdvanceUrl(workflow, step, status) {
 }
 
 function workflowAdvanceCommand(workflow, step, status) {
-  return `curl.exe -fsS -X POST ${workflowAdvanceUrl(workflow, step, status)}`;
+  const curlCmd = process.platform === "win32" ? "curl.exe" : "curl";
+  return `${curlCmd} -fsS -X POST ${workflowAdvanceUrl(workflow, step, status)}`;
 }
 
 function workflowStepMessage(workflow) {
-  const step = workflow.steps[workflow.currentIndex] || workflow.steps[workflow.steps.length - 1];
+  const steps = ensureWorkflowSteps(workflow);
+  const step = activeWorkflowStep(workflow);
   const tokensUsed = normalizeTokenCount(workflow.tokensUsed, 0);
   const tokenBudget = normalizeTokenBudget(workflow.tokenBudget);
   const lines = [
@@ -260,7 +313,7 @@ function workflowStepMessage(workflow) {
     `- Workflow ID: ${workflow.id}`,
     `- Cron job ID: ${workflow.jobId || "pending"}`,
     `- Workflow: ${workflow.name || "Unnamed workflow"}`,
-    `- Active step: ${step.index + 1} of ${workflow.steps.length}`,
+    `- Active step: ${step.index + 1} of ${steps.length}`,
     `- Step name: ${step.name}`,
     `- Focused event log, read only if needed: ${workflowLogUrl(workflow)}`,
     "",
@@ -322,13 +375,17 @@ function workflowStepMessage(workflow) {
 
 function sessionArtifactPath(session, suffix) {
   if (!session?.agentId || !session?.sessionId) return null;
-  return join(homedir(), ".openclaw", "agents", session.agentId, "sessions", `${session.sessionId}${suffix}`);
+  const agentsDir = join(homedir(), ".openclaw", "agents");
+  const sessionsDir = resolve(agentsDir, session.agentId, "sessions");
+  if (!pathIsInside(agentsDir, sessionsDir)) return null;
+  const file = resolve(sessionsDir, `${session.sessionId}${suffix}`);
+  return pathIsInside(sessionsDir, file) ? file : null;
 }
 
 async function readJsonlTail(file, limit = 160) {
   if (!file) return [];
   try {
-    const text = await readFile(file, "utf8");
+    const text = await readTextTail(file);
     return text
       .split(/\r?\n/)
       .filter(Boolean)
@@ -630,6 +687,11 @@ function workflowLogText(log) {
 async function createCronWorkflow(body, settings) {
   const workflowBody = body.workflow || {};
   const steps = parseWorkflowSteps(workflowBody.steps);
+  if (!steps.length) {
+    const error = new Error("Workflow step rows are required.");
+    error.status = 400;
+    throw error;
+  }
   const workflow = {
     id: randomUUID(),
     createdAt: new Date().toISOString(),
@@ -707,10 +769,12 @@ async function createCronWorkflow(body, settings) {
 
   const editMessageArgs = ["cron", "edit", jobId, "--message", workflowStepMessage(workflow)];
   const editMessageResult = await execOpenClaw(editMessageArgs, { timeoutMs: 30000 });
-  const enableArgs = requestedEnabled ? ["cron", "edit", jobId, "--enable"] : null;
+  const enableArgs = requestedEnabled && editMessageResult.ok ? ["cron", "edit", jobId, "--enable"] : null;
   const enableResult = enableArgs ? await execOpenClaw(enableArgs, { timeoutMs: 30000 }) : null;
-  const ok = addResult.ok && editMessageResult.ok && (!enableResult || enableResult.ok);
-  workflow.status = requestedEnabled ? (enableResult?.ok ? "active" : "enable_failed") : "disabled";
+  const ok = addResult.ok && editMessageResult.ok && (!requestedEnabled || Boolean(enableResult?.ok));
+  workflow.status = editMessageResult.ok
+    ? (requestedEnabled ? (enableResult?.ok ? "active" : "enable_failed") : "disabled")
+    : "prompt_update_failed";
   workflowEvent(workflow, "cron.message_updated", {
     status: editMessageResult.ok ? "done" : "failed",
     title: "Cron prompt rewritten with real job id",
@@ -723,6 +787,12 @@ async function createCronWorkflow(body, settings) {
       title: enableResult.ok ? "Cron job enabled" : "Cron enable failed",
       detail: enableResult.ok ? "The workflow controller job is active." : enableResult.stderr || enableResult.error,
       command: displayCommand(enableArgs),
+    });
+  } else if (requestedEnabled && !editMessageResult.ok) {
+    workflowEvent(workflow, "cron.enable_skipped", {
+      status: "disabled",
+      title: "Cron enable skipped",
+      detail: "The job was left disabled because the controller prompt could not be rewritten with the real cron job id.",
     });
   }
   await writeWorkflow(workflow);
@@ -762,12 +832,17 @@ async function createCronWorkflow(body, settings) {
 }
 
 async function advanceWorkflow(id, body) {
+  return withWorkflowLock(id, () => advanceWorkflowUnlocked(id, body));
+}
+
+async function advanceWorkflowUnlocked(id, body) {
   const workflow = await readWorkflow(id);
   if (!workflow) {
     const error = new Error("Workflow not found.");
     error.status = 404;
     throw error;
   }
+  ensureWorkflowSteps(workflow);
   const jobId = optionalText(body.jobId, 120);
   if (jobId !== workflow.jobId) {
     const error = new Error("Workflow job id mismatch.");
@@ -775,7 +850,30 @@ async function advanceWorkflow(id, body) {
     throw error;
   }
   const stepIndex = Number(body.stepIndex);
-  if (!Number.isInteger(stepIndex) || stepIndex !== workflow.currentIndex) {
+  const activeStep = workflow.steps[workflow.currentIndex] || null;
+  if (!activeStep || !Number.isInteger(stepIndex) || stepIndex !== workflow.currentIndex) {
+    const tokenUpdate = await refreshWorkflowTokenUsage(workflow, body);
+    recordWorkflowTokenEvent(workflow, tokenUpdate, {
+      stepIndex: Number.isInteger(stepIndex) ? stepIndex : null,
+    });
+    let disableRetryResult = null;
+    let disableRetryCommand = "";
+    if (workflowNeedsDisableRetry(workflow)) {
+      const disableRetryArgs = ["cron", "edit", workflow.jobId, "--disable", "--description", `${workflow.name} paused: retry after stale report while status is ${workflow.status}.`];
+      disableRetryCommand = displayCommand(disableRetryArgs);
+      disableRetryResult = await execOpenClaw(disableRetryArgs, { timeoutMs: 30000 });
+      if (disableRetryResult.ok && workflow.status === "complete_disable_failed") workflow.status = "complete";
+      workflowEvent(workflow, "cron.disable_retry", {
+        status: disableRetryResult.ok ? "disabled" : "failed",
+        stepIndex: Number.isInteger(stepIndex) ? stepIndex : null,
+        title: disableRetryResult.ok ? "Cron disable retry succeeded" : "Cron disable retry failed",
+        detail: disableRetryResult.ok
+          ? "A stale report arrived after a prior scheduler cleanup failure, so Automator retried disabling the cron job."
+          : disableRetryResult.stderr || disableRetryResult.error,
+        command: disableRetryCommand,
+        result: disableRetryResult.stdout || "",
+      });
+    }
     workflowEvent(workflow, "step.stale_report", {
       status: "ignored",
       stepIndex: Number.isInteger(stepIndex) ? stepIndex : null,
@@ -783,21 +881,20 @@ async function advanceWorkflow(id, body) {
       detail: `Reported step ${body.stepIndex ?? "unknown"} did not match active step ${workflow.currentIndex}.`,
     });
     await writeWorkflow(workflow);
-    return { ok: true, advanced: false, workflow, reason: "stale step report ignored" };
+    return {
+      ok: !disableRetryResult || disableRetryResult.ok,
+      advanced: false,
+      workflow,
+      command: disableRetryCommand,
+      result: disableRetryResult,
+      reason: "stale step report ignored",
+    };
   }
   const status = String(body.status || "").toLowerCase();
   const summary = optionalText(body.summary, 1000);
-  const step = workflow.steps[stepIndex];
+  const step = activeStep;
   const tokenUpdate = await refreshWorkflowTokenUsage(workflow, body);
-  if (tokenUpdate.source || tokenUpdate.delta > 0) {
-    workflowEvent(workflow, "workflow.tokens_updated", {
-      status: "tracked",
-      step,
-      stepIndex,
-      title: "Token usage updated",
-      detail: `Tokens used: ${formatTokenCount(tokenUpdate.tokensUsed)}. Token budget: ${formatTokenBudget(tokenUpdate.tokenBudget)}. Tokens remaining: ${formatTokensRemaining(tokenUpdate.tokensUsed, tokenUpdate.tokenBudget)}.${tokenUpdate.source ? ` Source: ${tokenUpdate.source}.` : ""}`,
-    });
-  }
+  recordWorkflowTokenEvent(workflow, tokenUpdate, { step, stepIndex });
   workflow.history.push({
     at: new Date().toISOString(),
     stepIndex,
@@ -819,9 +916,9 @@ async function advanceWorkflow(id, body) {
     workflow.steps[stepIndex].completedAt = new Date().toISOString();
     workflow.currentIndex += 1;
     if (workflow.currentIndex >= workflow.steps.length) {
-      workflow.status = "complete";
       const disableArgs = ["cron", "edit", workflow.jobId, "--disable", "--description", `${workflow.name} completed by workflow controller.`];
       const disableResult = await execOpenClaw(disableArgs, { timeoutMs: 30000 });
+      workflow.status = disableResult.ok ? "complete" : "complete_disable_failed";
       workflowEvent(workflow, "workflow.completed", {
         status: disableResult.ok ? "complete" : "failed",
         step,
@@ -831,11 +928,16 @@ async function advanceWorkflow(id, body) {
         command: displayCommand(disableArgs),
       });
       await writeWorkflow(workflow);
-      return { ok: disableResult.ok, advanced: true, complete: true, workflow, command: displayCommand(disableArgs), result: disableResult };
+      return { ok: disableResult.ok, advanced: true, complete: disableResult.ok, workflow, command: displayCommand(disableArgs), result: disableResult };
     }
     workflow.status = "active";
     const editArgs = ["cron", "edit", workflow.jobId, "--message", workflowStepMessage(workflow)];
     const editResult = await execOpenClaw(editArgs, { timeoutMs: 30000 });
+    const pauseArgs = !editResult.ok
+      ? ["cron", "edit", workflow.jobId, "--disable", "--description", `${workflow.name} paused: prompt rewrite failed after ${workflowStepLabel(step)}.`]
+      : null;
+    const pauseResult = pauseArgs ? await execOpenClaw(pauseArgs, { timeoutMs: 30000 }) : null;
+    if (!editResult.ok) workflow.status = "advance_failed";
     workflowEvent(workflow, "step.advanced", {
       status: editResult.ok ? "active" : "failed",
       step,
@@ -846,8 +948,29 @@ async function advanceWorkflow(id, body) {
         : editResult.stderr || editResult.error,
       command: displayCommand(editArgs),
     });
+    if (pauseArgs) {
+      workflowEvent(workflow, "cron.paused", {
+        status: pauseResult?.ok ? "disabled" : "failed",
+        step,
+        stepIndex,
+        title: pauseResult?.ok ? "Cron paused after prompt rewrite failure" : "Cron pause after prompt rewrite failure failed",
+        detail: pauseResult?.ok
+          ? "The completed row was advanced internally, but the scheduler was paused so it cannot rerun the stale prompt."
+          : pauseResult?.stderr || pauseResult?.error || "The scheduler may still contain the previous prompt.",
+        command: displayCommand(pauseArgs),
+        result: pauseResult?.stdout || "",
+      });
+    }
     await writeWorkflow(workflow);
-    return { ok: editResult.ok, advanced: true, complete: false, workflow, command: displayCommand(editArgs), result: editResult };
+    return {
+      ok: editResult.ok,
+      advanced: true,
+      complete: false,
+      workflow,
+      command: displayCommand(editArgs),
+      result: editResult,
+      pause: pauseResult,
+    };
   }
 
   if (["progress", "continue", "continued", "partial", "in_progress"].includes(status)) {

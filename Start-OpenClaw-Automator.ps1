@@ -6,11 +6,11 @@ $ErrorActionPreference = "Stop"
 $Host.UI.RawUI.WindowTitle = "OpenClaw Automator"
 $env:PATH = "$env:APPDATA\npm;C:\Program Files\nodejs;$env:PATH"
 
-function Test-HttpOk {
-    param([string] $Url)
+function Test-AutomatorHealth {
+    param([int] $TargetPort)
     try {
-        $response = Invoke-RestMethod -Uri $Url -TimeoutSec 2
-        return [bool] $response.ok
+        $response = Invoke-RestMethod -Uri "http://127.0.0.1:$TargetPort/api/health" -TimeoutSec 2
+        return ([bool] $response.ok -and [string] $response.app -eq "OpenClaw Automator")
     } catch {
         return $false
     }
@@ -72,16 +72,21 @@ Stop-Process -Id `$processId -Force -ErrorAction Stop
     return ($process.ExitCode -eq 0)
 }
 
-function Stop-PortOwners {
+function Stop-AutomatorPortOwners {
     param(
         [int] $TargetPort,
         [string] $ExpectedServerPath
     )
     $ownerIds = @(Get-PortOwnerIds -TargetPort $TargetPort)
+    $blocked = @()
     foreach ($ownerId in $ownerIds) {
         if (-not (Test-AutomatorProcess -ProcessId $ownerId -ExpectedServerPath $ExpectedServerPath)) {
             $commandLine = Get-ProcessCommandLine -ProcessId $ownerId
-            throw "Port $TargetPort is owned by PID $ownerId, but it does not look like OpenClaw Automator. Command line: $commandLine"
+            $blocked += [pscustomobject]@{
+                ProcessId = $ownerId
+                CommandLine = $commandLine
+            }
+            continue
         }
         try {
             $process = Get-Process -Id $ownerId -ErrorAction Stop
@@ -94,6 +99,7 @@ function Stop-PortOwners {
             }
         }
     }
+    return $blocked
 }
 
 function Wait-PortFree {
@@ -105,6 +111,23 @@ function Wait-PortFree {
         Start-Sleep -Milliseconds 200
     }
     return $false
+}
+
+function Find-AvailableAutomatorPort {
+    param(
+        [int] $StartPort,
+        [int] $MaxAttempts = 50
+    )
+    for ($offset = 0; $offset -lt $MaxAttempts; $offset++) {
+        $candidate = $StartPort + $offset
+        if ($candidate -gt 65535) {
+            break
+        }
+        if (-not (Get-PortOwnerIds -TargetPort $candidate)) {
+            return $candidate
+        }
+    }
+    throw "Could not find a free Automator port starting at $StartPort."
 }
 
 if (-not (Get-Command node.exe -ErrorAction SilentlyContinue)) {
@@ -134,7 +157,27 @@ New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
 $healthUrl = "http://127.0.0.1:$Port/api/health"
 $appUrl = "http://127.0.0.1:$Port/"
 
-Stop-PortOwners -TargetPort $Port -ExpectedServerPath $serverPath
+if (Test-AutomatorHealth -TargetPort $Port) {
+    Write-Host "OpenClaw Automator is already running:"
+    Write-Host "  $appUrl"
+    Write-Host ""
+    Write-Host "Opening browser..."
+    Start-Process $appUrl
+    exit 0
+}
+
+$blockedOwners = @(Stop-AutomatorPortOwners -TargetPort $Port -ExpectedServerPath $serverPath)
+if ($blockedOwners.Count -gt 0) {
+    $originalPort = $Port
+    $Port = Find-AvailableAutomatorPort -StartPort ($Port + 1)
+    Write-Host "Port $originalPort is in use by a process that could not be verified as OpenClaw Automator." -ForegroundColor Yellow
+    foreach ($owner in $blockedOwners) {
+        Write-Host "  PID $($owner.ProcessId): $($owner.CommandLine)"
+    }
+    Write-Host "Starting OpenClaw Automator on port $Port instead."
+    $healthUrl = "http://127.0.0.1:$Port/api/health"
+    $appUrl = "http://127.0.0.1:$Port/"
+}
 
 if (Test-Path -LiteralPath $pidPath) {
     Remove-Item -LiteralPath $pidPath -Force -ErrorAction SilentlyContinue
@@ -153,7 +196,7 @@ Set-Content -Path $pidPath -Value $process.Id -Encoding ASCII
 $ready = $false
 for ($i = 0; $i -lt 30; $i++) {
     Start-Sleep -Milliseconds 300
-    if (Test-HttpOk $healthUrl) {
+    if (Test-AutomatorHealth -TargetPort $Port) {
         $ready = $true
         break
     }

@@ -17,8 +17,26 @@ function openclawInvocation(args) {
   return { command: openclawCommand, args };
 }
 
+function execEnv() {
+  const env = { ...process.env };
+  if (process.platform === "win32") {
+    env.PATH = [
+      process.env.APPDATA ? `${process.env.APPDATA}\\npm` : "",
+      "C:\\Program Files\\nodejs",
+      process.env.PATH || "",
+    ].filter(Boolean).join(";");
+  }
+  return env;
+}
+
+function positiveIntegerOption(value, fallback) {
+  const parsed = Number(value);
+  if (Number.isFinite(parsed) && parsed > 0) return Math.round(parsed);
+  return fallback;
+}
+
 function execOpenClaw(args, options = {}) {
-  const timeout = Number(options.timeoutMs || 30000);
+  const timeout = positiveIntegerOption(options.timeoutMs, 30000);
   return new Promise((resolve) => {
     const invocation = openclawInvocation(args);
     execFile(invocation.command, invocation.args, {
@@ -26,18 +44,15 @@ function execOpenClaw(args, options = {}) {
       windowsHide: true,
       timeout,
       maxBuffer: 20 * 1024 * 1024,
-      env: {
-        ...process.env,
-        PATH: `${process.env.APPDATA || ""}\\npm;C:\\Program Files\\nodejs;${process.env.PATH || ""}`,
-      },
+      env: execEnv(),
     }, (error, stdout, stderr) => {
       resolve({
         ok: !error,
         code: error?.code ?? 0,
         signal: error?.signal || null,
         args,
-        stdout: compactText(stdout || "", Number(options.stdoutMax || 6000)),
-        stderr: compactText(stderr || "", Number(options.stderrMax || 6000)),
+        stdout: compactText(stdout || "", positiveIntegerOption(options.stdoutMax, 6000)),
+        stderr: compactText(stderr || "", positiveIntegerOption(options.stderrMax, 6000)),
         error: error ? compactText(error.message || String(error)) : "",
       });
     });
@@ -83,13 +98,17 @@ async function runCommand(kind, args, timeoutMs) {
     durationMs: Date.now() - startedAt,
     json: parseJson(result.stdout, null),
   };
-  await appendAudit({
-    kind,
-    ok: result.ok,
-    command: displayCommand(args),
-    code: result.code,
-    durationMs: payload.durationMs,
-  });
+  try {
+    await appendAudit({
+      kind,
+      ok: result.ok,
+      command: displayCommand(args),
+      code: result.code,
+      durationMs: payload.durationMs,
+    });
+  } catch (error) {
+    console.warn("OpenClaw Automator audit logging failed.", error?.message || error);
+  }
   return payload;
 }
 

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { createServer } from "node:http";
 
 import { appVersion, defaultSettings, port, settingsPath } from "./config.mjs";
-import { agentArgs, cronArgs, eventArgs } from "./commands.mjs";
+import { agentArgs, cronArgs, eventArgs, normalizePositiveInteger } from "./commands.mjs";
 import { collectBootstrap } from "./session-bootstrap.mjs";
 import { displayCommand, readRuntimeSettings, runCommand } from "./openclaw.mjs";
 import { ensureStateDir, readSettings, writeSettings } from "./state.mjs";
@@ -15,6 +15,7 @@ import {
 } from "./http.mjs";
 import {
   buildWorkflowIntake,
+  claimWorkflowIntakeApproval,
   createWorkflowIntakeApproval,
   installWorkflowIntakeSkill,
   publicWorkflowIntakeApproval,
@@ -22,6 +23,7 @@ import {
   validateWorkflowIntakeApproval,
   workflowIntakeCreateRequestTemplate,
   workflowIntakeDocs,
+  workflowIntakeDraftHash,
   workflowIntakeSchema,
 } from "./workflow-intake.mjs";
 import {
@@ -33,8 +35,22 @@ import {
   workflowLogText,
 } from "./workflows.mjs";
 
+function decodePathPart(value) {
+  try {
+    return decodeURIComponent(value || "");
+  } catch {
+    const error = new Error("Malformed URL path.");
+    error.status = 400;
+    throw error;
+  }
+}
+
+function pathParts(pathname) {
+  return String(pathname || "").split("/");
+}
+
 async function serveWorkflowLog(res, pathname) {
-  const id = decodeURIComponent(pathname.split("/")[2] || "");
+  const id = decodePathPart(pathParts(pathname)[2]);
   const workflow = await readWorkflow(id);
   if (!workflow) {
     textResponse(res, 404, "Workflow not found.");
@@ -44,7 +60,7 @@ async function serveWorkflowLog(res, pathname) {
 }
 
 async function serveWorkflowLogJson(res, pathname) {
-  const id = decodeURIComponent(pathname.split("/")[2] || "");
+  const id = decodePathPart(pathParts(pathname)[2]);
   const workflow = await readWorkflow(id);
   if (!workflow) {
     errorResponse(res, 404, "Workflow not found.");
@@ -95,12 +111,58 @@ async function handleApi(req, res, pathname) {
       });
       return;
     }
-    await updateWorkflowIntakeApproval(approval.approval.id, {
+    const claim = await claimWorkflowIntakeApproval(approval.approval.id, {
       status: "creating",
       confirmedAt: approval.confirmation.confirmedAt,
       confirmationMessageId: approval.confirmation.messageId,
+    }, {
+      code: body.approvalCode || body.approval?.code,
+      sessionKey: intake.draft.sessionKey,
+      draftHash: workflowIntakeDraftHash(intake.draft),
     });
-    const result = await createCronWorkflow(intake.draft, settings);
+    if (!claim.ok) {
+      jsonResponse(res, 200, {
+        ...intake,
+        mode: claim.mode,
+        created: false,
+        approvalRequired: true,
+        approval: publicWorkflowIntakeApproval(claim.approval || approval.approval),
+        createRequestTemplate: workflowIntakeCreateRequestTemplate(intake.draft, claim.approval || approval.approval),
+        approvalError: {
+          reason: claim.reason,
+          detail: claim.detail,
+        },
+      });
+      return;
+    }
+    let result;
+    try {
+      result = await createCronWorkflow(intake.draft, settings);
+    } catch (error) {
+      result = {
+        ok: false,
+        error: error?.message || "Workflow creation failed.",
+      };
+      await updateWorkflowIntakeApproval(approval.approval.id, {
+        status: "failed",
+        workflowId: "",
+        jobId: "",
+        error: result.error,
+      });
+      jsonResponse(res, 200, {
+        ...intake,
+        mode: "create_failed",
+        created: false,
+        approval: {
+          ...publicWorkflowIntakeApproval(approval.approval),
+          confirmedAt: approval.confirmation.confirmedAt,
+          confirmationMessageId: approval.confirmation.messageId,
+        },
+        createRequestTemplate: workflowIntakeCreateRequestTemplate(intake.draft, approval.approval),
+        result,
+      });
+      return;
+    }
     await updateWorkflowIntakeApproval(approval.approval.id, {
       status: result.ok ? "used" : "failed",
       workflowId: result.workflow?.id || "",
@@ -132,8 +194,9 @@ async function handleApi(req, res, pathname) {
     jsonResponse(res, 200, { ok: true, settings: await readSettings() });
     return;
   }
-  if (req.method === "GET" && pathname.startsWith("/api/workflows/") && pathname.endsWith("/events")) {
-    const id = decodeURIComponent(pathname.split("/")[3] || "");
+  const parts = pathParts(pathname);
+  if (req.method === "GET" && parts.length === 5 && parts[1] === "api" && parts[2] === "workflows" && parts[4] === "events") {
+    const id = decodePathPart(parts[3]);
     const workflow = await readWorkflow(id);
     if (!workflow) {
       errorResponse(res, 404, "Workflow not found.");
@@ -142,10 +205,9 @@ async function handleApi(req, res, pathname) {
     jsonResponse(res, 200, await buildWorkflowLog(workflow));
     return;
   }
-  if (req.method === "GET" && pathname.startsWith("/api/workflows/")) {
-    const parts = pathname.split("/");
+  if (req.method === "GET" && parts[1] === "api" && parts[2] === "workflows") {
     if (parts.length === 4 && parts[3]) {
-      const id = decodeURIComponent(parts[3] || "");
+      const id = decodePathPart(parts[3]);
       const workflow = await readWorkflow(id);
       if (!workflow) {
         errorResponse(res, 404, "Workflow not found.");
@@ -172,7 +234,8 @@ async function handleApi(req, res, pathname) {
     const settings = await readSettings();
     const body = await readJsonBody(req);
     const args = agentArgs(body, settings);
-    jsonResponse(res, 200, await runCommand("agent", args, (Number(body.timeoutSeconds || settings.defaultTimeoutSeconds) + 20) * 1000));
+    const timeoutSeconds = normalizePositiveInteger(body.timeoutSeconds, settings.defaultTimeoutSeconds) || defaultSettings.defaultTimeoutSeconds;
+    jsonResponse(res, 200, await runCommand("agent", args, (timeoutSeconds + 20) * 1000));
     return;
   }
   if (req.method === "POST" && pathname === "/api/cron/create") {
@@ -186,19 +249,18 @@ async function handleApi(req, res, pathname) {
     jsonResponse(res, 200, await runCommand("cron", args, 30000));
     return;
   }
-  if (req.method === "POST" && pathname.startsWith("/api/workflows/") && pathname.includes("/advance/")) {
-    const parts = pathname.split("/");
-    const id = decodeURIComponent(parts[3] || "");
+  if (req.method === "POST" && parts.length === 8 && parts[1] === "api" && parts[2] === "workflows" && parts[4] === "advance") {
+    const id = decodePathPart(parts[3]);
     const body = {
-      jobId: decodeURIComponent(parts[5] || ""),
-      stepIndex: Number(decodeURIComponent(parts[6] || "")),
-      status: decodeURIComponent(parts[7] || ""),
+      jobId: decodePathPart(parts[5]),
+      stepIndex: Number(decodePathPart(parts[6])),
+      status: decodePathPart(parts[7]),
     };
     jsonResponse(res, 200, await advanceWorkflow(id, body));
     return;
   }
-  if (req.method === "POST" && pathname.startsWith("/api/workflows/") && pathname.endsWith("/advance")) {
-    const id = decodeURIComponent(pathname.split("/")[3] || "");
+  if (req.method === "POST" && parts.length === 5 && parts[1] === "api" && parts[2] === "workflows" && parts[4] === "advance") {
+    const id = decodePathPart(parts[3]);
     const body = await readJsonBody(req);
     jsonResponse(res, 200, await advanceWorkflow(id, body));
     return;
@@ -206,7 +268,8 @@ async function handleApi(req, res, pathname) {
   if (req.method === "POST" && pathname === "/api/system/event") {
     const body = await readJsonBody(req);
     const args = eventArgs(body);
-    jsonResponse(res, 200, await runCommand("system-event", args, Number(body.timeoutMs || 30000) + 10000));
+    const timeoutMs = normalizePositiveInteger(body.timeoutMs, 30000) || 30000;
+    jsonResponse(res, 200, await runCommand("system-event", args, timeoutMs + 10000));
     return;
   }
   errorResponse(res, 404, "API route not found.");
@@ -215,7 +278,7 @@ async function handleApi(req, res, pathname) {
 function createAutomatorServer() {
   return createServer(async (req, res) => {
     try {
-      const url = new URL(req.url || "/", `http://${req.headers.host || `127.0.0.1:${port}`}`);
+      const url = new URL(req.url || "/", `http://127.0.0.1:${port}`);
       if (url.pathname.startsWith("/api/")) {
         await handleApi(req, res, url.pathname);
         return;
@@ -228,11 +291,12 @@ function createAutomatorServer() {
         jsonResponse(res, 200, workflowIntakeSchema());
         return;
       }
-      if (req.method === "GET" && url.pathname.startsWith("/workflows/") && url.pathname.endsWith("/events.json")) {
+      const parts = pathParts(url.pathname);
+      if (req.method === "GET" && parts.length === 4 && parts[1] === "workflows" && parts[3] === "events.json") {
         await serveWorkflowLogJson(res, url.pathname);
         return;
       }
-      if (req.method === "GET" && url.pathname.startsWith("/workflows/") && (url.pathname.endsWith("/events.txt") || /^\/workflows\/[^/]+\/?$/.test(url.pathname))) {
+      if (req.method === "GET" && parts[1] === "workflows" && ((parts.length === 4 && parts[3] === "events.txt") || (parts.length === 3 && parts[2]) || (parts.length === 4 && parts[2] && parts[3] === ""))) {
         await serveWorkflowLog(res, url.pathname);
         return;
       }

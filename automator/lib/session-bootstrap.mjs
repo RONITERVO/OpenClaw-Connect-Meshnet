@@ -144,6 +144,10 @@ async function collectBootstrap() {
   const selected = settings.preferTelegramDirect
     ? sessions.find((session) => session.channel === "telegram" && session.scope === "direct") || sessions[0] || null
     : sessions[0] || null;
+  const gatewayText = gatewayResult.stdout || gatewayResult.stderr || "";
+  const gatewayHasProbe = /Connectivity probe:/i.test(gatewayText);
+  const gatewayProbeOk = /Connectivity probe:\s*ok/i.test(gatewayText);
+  const gatewayHasVersion = /Gateway version:/i.test(gatewayText);
   return {
     ok: sessionsResult.ok,
     app: {
@@ -156,7 +160,7 @@ async function collectBootstrap() {
     checks: {
       sessions: { ok: sessionsResult.ok, error: sessionsResult.stderr || sessionsResult.error },
       cron: { ok: cronResult.ok, error: cronResult.stderr || cronResult.error },
-      gateway: { ok: gatewayResult.ok && /Connectivity probe:\s*ok|Gateway version:/i.test(gatewayResult.stdout), text: gatewayResult.stdout || gatewayResult.stderr },
+      gateway: { ok: gatewayResult.ok && (gatewayProbeOk || (!gatewayHasProbe && gatewayHasVersion)), text: gatewayText },
     },
     settings,
     sessions,

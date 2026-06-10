@@ -7,6 +7,14 @@ function normalizeThinking(value, fallback = "xhigh") {
   return allowed.has(text) ? text : fallback;
 }
 
+function normalizePositiveInteger(value, fallback = null) {
+  const selected = value == null || value === "" ? fallback : value;
+  const parsed = Number(selected);
+  if (Number.isFinite(parsed) && parsed > 0) return Math.round(parsed);
+  const fallbackParsed = Number(fallback);
+  return Number.isFinite(fallbackParsed) && fallbackParsed > 0 ? Math.round(fallbackParsed) : null;
+}
+
 function agentArgs(body, settings) {
   const sessionKey = requireText(body.sessionKey, "Session key", 300);
   const message = requireText(body.message, "Message");
@@ -17,8 +25,8 @@ function agentArgs(body, settings) {
   if (model) args.push("--model", model);
   const thinking = normalizeThinking(body.thinking, settings.defaultThinking);
   if (thinking) args.push("--thinking", thinking);
-  const timeout = Number(body.timeoutSeconds || settings.defaultTimeoutSeconds);
-  if (Number.isFinite(timeout) && timeout > 0) args.push("--timeout", String(Math.round(timeout)));
+  const timeout = normalizePositiveInteger(body.timeoutSeconds, settings.defaultTimeoutSeconds);
+  if (timeout) args.push("--timeout", String(timeout));
   if (body.deliver) {
     args.push("--deliver");
     const replyChannel = optionalText(body.replyChannel || settings.replyChannel, 80);
@@ -83,8 +91,8 @@ function cronArgs(body, settings) {
     else args.push("--no-deliver");
   }
   if (jobMode !== "system-event" && body.lightContext) args.push("--light-context");
-  const timeoutSeconds = Number(body.timeoutSeconds || settings.defaultTimeoutSeconds);
-  if (jobMode !== "system-event" && Number.isFinite(timeoutSeconds) && timeoutSeconds > 0) args.push("--timeout-seconds", String(Math.round(timeoutSeconds)));
+  const timeoutSeconds = normalizePositiveInteger(body.timeoutSeconds, settings.defaultTimeoutSeconds);
+  if (jobMode !== "system-event" && timeoutSeconds) args.push("--timeout-seconds", String(timeoutSeconds));
   const channel = requestedChannel;
   const to = optionalText(body.to || body.replyTo, 300);
   const wantsDelivery = jobMode !== "system-event" && deliveryMode === "notify";
@@ -108,8 +116,8 @@ function eventArgs(body) {
   const mode = String(body.mode || "next-heartbeat");
   const args = ["system", "event", "--session-key", sessionKey, "--text", text, "--mode", mode, "--json"];
   if (body.expectFinal) args.push("--expect-final");
-  const timeout = Number(body.timeoutMs || 30000);
-  if (Number.isFinite(timeout) && timeout > 0) args.push("--timeout", String(Math.round(timeout)));
+  const timeout = normalizePositiveInteger(body.timeoutMs, 30000);
+  if (timeout) args.push("--timeout", String(timeout));
   return args;
 }
 
@@ -117,5 +125,6 @@ export {
   agentArgs,
   cronArgs,
   eventArgs,
+  normalizePositiveInteger,
   normalizeThinking,
 };

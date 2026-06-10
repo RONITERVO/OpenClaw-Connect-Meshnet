@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import {
   appVersion,
@@ -14,11 +14,11 @@ import {
   workflowIntakeSkillSlug,
 } from "./config.mjs";
 import { cronDeliveryWarning, cronNotifySupport } from "./channels.mjs";
-import { cronArgs, normalizeThinking } from "./commands.mjs";
+import { cronArgs, normalizePositiveInteger, normalizeThinking } from "./commands.mjs";
 import { displayCommand, execOpenClaw } from "./openclaw.mjs";
-import { ensureStateDir } from "./state.mjs";
+import { ensureStateDir, writeJsonFileAtomic } from "./state.mjs";
 import { sessionParts } from "./session-utils.mjs";
-import { compactText, optionalText, parseJson, stableJson } from "./utils.mjs";
+import { compactText, optionalText, parseJson, pathIsInside, readTextTail, stableJson } from "./utils.mjs";
 import { parseWorkflowSteps, workflowStepMessage } from "./workflows.mjs";
 
 function workflowIntakeSkillMarkdown() {
@@ -240,48 +240,105 @@ async function readWorkflowIntakeApprovals() {
   }
 }
 
+let workflowIntakeApprovalLock = Promise.resolve();
+
+async function withWorkflowIntakeApprovalLock(task) {
+  const previous = workflowIntakeApprovalLock;
+  let release;
+  workflowIntakeApprovalLock = new Promise((resolve) => {
+    release = resolve;
+  });
+  await previous.catch(() => {});
+  try {
+    return await task();
+  } finally {
+    release();
+  }
+}
+
 async function writeWorkflowIntakeApprovals(state) {
   await ensureStateDir();
-  await writeFile(workflowIntakeApprovalsPath, `${JSON.stringify({ approvals: state.approvals || [] }, null, 2)}\n`, "utf8");
+  await writeJsonFileAtomic(workflowIntakeApprovalsPath, { approvals: state.approvals || [] });
 }
 
 async function createWorkflowIntakeApproval(intake) {
-  const now = Date.now();
-  const draftHash = workflowIntakeDraftHash(intake.draft);
-  const state = await readWorkflowIntakeApprovals();
-  const approvals = state.approvals.filter((item) => {
-    if (!item || item.expiresAtMs <= now) return false;
-    if (item.status !== "pending") return true;
-    return item.draftHash !== draftHash;
+  return withWorkflowIntakeApprovalLock(async () => {
+    const now = Date.now();
+    const draftHash = workflowIntakeDraftHash(intake.draft);
+    const state = await readWorkflowIntakeApprovals();
+    const approvals = state.approvals.filter((item) => {
+      if (!item || item.expiresAtMs <= now) return false;
+      if (item.status !== "pending") return true;
+      return item.draftHash !== draftHash;
+    });
+    const approval = {
+      id: randomUUID(),
+      code: workflowIntakeApprovalCode(),
+      status: "pending",
+      createdAt: new Date(now).toISOString(),
+      createdAtMs: now,
+      expiresAt: new Date(now + workflowIntakeApprovalTtlMs).toISOString(),
+      expiresAtMs: now + workflowIntakeApprovalTtlMs,
+      draftHash,
+      sessionKey: intake.draft.sessionKey,
+      name: intake.draft.name,
+    };
+    approvals.push(approval);
+    await writeWorkflowIntakeApprovals({ approvals });
+    return approval;
   });
-  const approval = {
-    id: randomUUID(),
-    code: workflowIntakeApprovalCode(),
-    status: "pending",
-    createdAt: new Date(now).toISOString(),
-    createdAtMs: now,
-    expiresAt: new Date(now + workflowIntakeApprovalTtlMs).toISOString(),
-    expiresAtMs: now + workflowIntakeApprovalTtlMs,
-    draftHash,
-    sessionKey: intake.draft.sessionKey,
-    name: intake.draft.name,
-  };
-  approvals.push(approval);
-  await writeWorkflowIntakeApprovals({ approvals });
-  return approval;
 }
 
 async function updateWorkflowIntakeApproval(id, patch) {
-  const state = await readWorkflowIntakeApprovals();
-  const index = state.approvals.findIndex((item) => item.id === id);
-  if (index < 0) return null;
-  state.approvals[index] = {
-    ...state.approvals[index],
-    ...patch,
-    updatedAt: new Date().toISOString(),
-  };
-  await writeWorkflowIntakeApprovals(state);
-  return state.approvals[index];
+  return withWorkflowIntakeApprovalLock(async () => {
+    const state = await readWorkflowIntakeApprovals();
+    const index = state.approvals.findIndex((item) => item.id === id);
+    if (index < 0) return null;
+    state.approvals[index] = {
+      ...state.approvals[index],
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    };
+    await writeWorkflowIntakeApprovals(state);
+    return state.approvals[index];
+  });
+}
+
+async function claimWorkflowIntakeApproval(id, patch = {}, expected = {}) {
+  return withWorkflowIntakeApprovalLock(async () => {
+    const state = await readWorkflowIntakeApprovals();
+    const index = state.approvals.findIndex((item) => item.id === id);
+    if (index < 0) {
+      return { ok: false, mode: "approval_required", reason: "unknown_approval", detail: "Approval id was not found. Run preview again." };
+    }
+    const approval = state.approvals[index];
+    if (["used", "creating", "failed"].includes(approval.status)) {
+      return { ok: false, mode: "approval_consumed", reason: "approval_consumed", detail: "This approval was already used or closed.", approval };
+    }
+    if (approval.status !== "pending") {
+      return { ok: false, mode: "approval_consumed", reason: "approval_consumed", detail: "This approval is no longer pending.", approval };
+    }
+    if (approval.expiresAtMs <= Date.now()) {
+      return { ok: false, mode: "approval_expired", reason: "approval_expired", detail: "Approval expired. Run preview again.", approval };
+    }
+    if (expected.code && compactApprovalText(expected.code) !== compactApprovalText(approval.code)) {
+      return { ok: false, mode: "approval_required", reason: "approval_code_mismatch", detail: "Approval code did not match the preview.", approval };
+    }
+    if (expected.sessionKey && approval.sessionKey !== expected.sessionKey) {
+      return { ok: false, mode: "approval_required", reason: "session_mismatch", detail: "Approval belongs to a different OpenClaw session.", approval };
+    }
+    if (expected.draftHash && approval.draftHash !== expected.draftHash) {
+      return { ok: false, mode: "approval_required", reason: "draft_changed", detail: "The create draft is not the same as the previewed draft. Run preview again.", approval };
+    }
+    state.approvals[index] = {
+      ...approval,
+      ...patch,
+      status: "creating",
+      updatedAt: new Date().toISOString(),
+    };
+    await writeWorkflowIntakeApprovals(state);
+    return { ok: true, approval: state.approvals[index] };
+  });
 }
 
 function normalizeApprovalText(value) {
@@ -290,6 +347,27 @@ function normalizeApprovalText(value) {
 
 function compactApprovalText(value) {
   return normalizeApprovalText(value).replace(/\s+/g, "");
+}
+
+function approvalTextConfirms(text, approval) {
+  const code = compactApprovalText(approval.code);
+  const positiveWords = new Set(["approve", "approved", "confirm", "confirmed", "create", "yes", "ok"]);
+  const negativeWords = new Set(["not", "never", "dont", "cannot", "cant", "wont", "reject", "rejected", "deny", "denied"]);
+  return String(text || "")
+    .split(/[.!?;\r\n]+/g)
+    .some((phrase) => {
+      const normalized = normalizeApprovalText(phrase);
+      if (!normalized) return false;
+      const words = normalized.split(/\s+/);
+      const positiveIndex = words.findIndex((word) => positiveWords.has(word));
+      if (!compactApprovalText(phrase).includes(code)) return false;
+      if (positiveIndex < 0) return false;
+      if (words.some((word) => negativeWords.has(word))) return false;
+      const noIndex = words.indexOf("no");
+      if (noIndex >= 0 && noIndex < positiveIndex) return false;
+      if (/\bdo\s+not\b|\bdon\s+t\b|\bcan\s+t\b|\bwon\s+t\b/.test(normalized)) return false;
+      return true;
+    });
 }
 
 function messageContentText(content) {
@@ -308,11 +386,17 @@ function messageContentText(content) {
 async function sessionFileForKey(sessionKey) {
   const parts = sessionParts(sessionKey);
   const agentId = parts.agentId || "main";
-  const sessionsPath = join(homedir(), ".openclaw", "agents", agentId, "sessions", "sessions.json");
+  const agentsDir = join(homedir(), ".openclaw", "agents");
+  const sessionsDir = resolve(agentsDir, agentId, "sessions");
+  if (!pathIsInside(agentsDir, sessionsDir)) return "";
+  const sessionsPath = join(sessionsDir, "sessions.json");
   const sessions = parseJson(await readFile(sessionsPath, "utf8"), {});
   const entry = sessions?.[sessionKey];
   if (!entry) return "";
-  return optionalText(entry.sessionFile, 1000) || (entry.sessionId ? join(homedir(), ".openclaw", "agents", agentId, "sessions", `${entry.sessionId}.jsonl`) : "");
+  const sessionFile = optionalText(entry.sessionFile, 1000) || (entry.sessionId ? join(sessionsDir, `${entry.sessionId}.jsonl`) : "");
+  if (!sessionFile) return "";
+  const resolved = resolve(sessionFile);
+  return pathIsInside(sessionsDir, resolved) ? resolved : "";
 }
 
 async function findWorkflowIntakeUserConfirmation(approval) {
@@ -326,9 +410,7 @@ async function findWorkflowIntakeUserConfirmation(approval) {
     return { ok: false, reason: "session_file_missing", detail: "Could not find the OpenClaw session transcript for the selected session key." };
   }
 
-  const code = compactApprovalText(approval.code);
-  const positiveWords = new Set(["approve", "approved", "confirm", "confirmed", "create", "yes", "ok"]);
-  const lines = (await readFile(sessionFile, "utf8")).split(/\r?\n/).filter(Boolean);
+  const lines = (await readTextTail(sessionFile)).split(/\r?\n/).filter(Boolean);
   for (const line of lines) {
     const item = parseJson(line, null);
     if (!item || item.type !== "message" || item.message?.role !== "user") continue;
@@ -336,10 +418,7 @@ async function findWorkflowIntakeUserConfirmation(approval) {
     if (!Number.isFinite(ts) || ts <= approval.createdAtMs) continue;
     const text = messageContentText(item.message.content);
     if (!text) continue;
-    const normalized = normalizeApprovalText(text);
-    if (!compactApprovalText(text).includes(code)) continue;
-    const hasPositiveWord = normalized.split(/\s+/).some((word) => positiveWords.has(word));
-    if (!hasPositiveWord) continue;
+    if (!approvalTextConfirms(text, approval)) continue;
     return { ok: true, messageId: item.id || "", confirmedAt: item.timestamp || new Date(ts).toISOString(), text: compactText(text, 300) };
   }
   return {
@@ -367,8 +446,8 @@ async function validateWorkflowIntakeApproval(body, intake) {
   if (!approval) {
     return { ok: false, mode: "approval_required", reason: "unknown_approval", detail: "Approval id was not found. Run preview again." };
   }
-  if (approval.status === "used" || approval.status === "creating") {
-    return { ok: false, mode: "approval_consumed", reason: "approval_consumed", detail: "This approval was already used." };
+  if (["used", "creating", "failed"].includes(approval.status)) {
+    return { ok: false, mode: "approval_consumed", reason: "approval_consumed", detail: "This approval was already used or closed." };
   }
   if (approval.expiresAtMs <= Date.now()) {
     return { ok: false, mode: "approval_expired", reason: "approval_expired", detail: "Approval expired. Run preview again." };
@@ -500,7 +579,7 @@ function buildWorkflowIntake(body, settings) {
     agent: optionalText(body.agent, 120),
     model: optionalText(body.model, 200),
     thinking: normalizeThinking(body.thinking, settings.defaultThinking),
-    timeoutSeconds: Number(body.timeoutSeconds || settings.defaultTimeoutSeconds),
+    timeoutSeconds: normalizePositiveInteger(body.timeoutSeconds, settings.defaultTimeoutSeconds) || settings.defaultTimeoutSeconds,
     tokenBudget,
     tools: Array.isArray(body.tools) ? body.tools.slice(0, 20).map((item) => optionalText(item, 80)).filter(Boolean) : optionalText(body.tools, 500),
     stagger: optionalText(body.stagger, 40),
@@ -670,7 +749,9 @@ function workflowIntakeDocs() {
 }
 
 export {
+  approvalTextConfirms,
   buildWorkflowIntake,
+  claimWorkflowIntakeApproval,
   createWorkflowIntakeApproval,
   installWorkflowIntakeSkill,
   publicWorkflowIntakeApproval,

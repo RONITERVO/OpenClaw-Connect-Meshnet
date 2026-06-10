@@ -1,7 +1,47 @@
+import { open } from "node:fs/promises";
+import { isAbsolute, relative, resolve } from "node:path";
+
+const DEFAULT_TEXT_TAIL_BYTES = 4 * 1024 * 1024;
+
+function positiveInteger(value, fallback) {
+  const number = Number(value);
+  if (Number.isFinite(number) && number > 0) return Math.floor(number);
+  return fallback;
+}
+
 function compactText(value, max = 6000) {
   const text = String(value ?? "").replace(/\s+$/g, "");
   if (text.length <= max) return text;
   return `${text.slice(0, max - 18)}... [truncated]`;
+}
+
+async function readTextTail(file, maxBytes = DEFAULT_TEXT_TAIL_BYTES) {
+  const handle = await open(file, "r");
+  try {
+    const info = await handle.stat();
+    const totalSize = Number(info.size) || 0;
+    const limit = positiveInteger(maxBytes, DEFAULT_TEXT_TAIL_BYTES);
+    const size = Math.max(0, Math.min(totalSize, limit));
+    const start = Math.max(0, totalSize - size);
+    const readStart = start > 0 ? start - 1 : start;
+    const readSize = size + (start > 0 ? 1 : 0);
+    const buffer = Buffer.alloc(readSize);
+    const { bytesRead } = await handle.read(buffer, 0, readSize, readStart);
+    const text = buffer.subarray(0, bytesRead).toString("utf8");
+    if (start === 0) return text;
+    const previousByte = buffer[0];
+    const body = buffer.subarray(1, bytesRead).toString("utf8");
+    if (previousByte === 10) return body;
+    if (previousByte === 13) return body.replace(/^\n/, "");
+    return body.replace(/^[^\r\n]*(\r?\n)?/, "");
+  } finally {
+    await handle.close();
+  }
+}
+
+function pathIsInside(base, target) {
+  const rel = relative(resolve(base), resolve(target));
+  return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..\\`) && !rel.startsWith("../"));
 }
 
 function jsonResponse(res, status, payload) {
@@ -113,7 +153,9 @@ export {
   compactText,
   extractFirstJsonValue,
   optionalText,
+  pathIsInside,
   parseJson,
+  readTextTail,
   requireText,
   stableJson,
 };
