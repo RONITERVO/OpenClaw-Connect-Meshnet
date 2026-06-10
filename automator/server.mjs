@@ -22,7 +22,7 @@ const openclawWorkspaceSkillsDir = join(homedir(), ".openclaw", "workspace", "sk
 const defaultGatewayHttp = process.env.OPENCLAW_AUTOMATOR_GATEWAY_HTTP || "http://127.0.0.1:18789";
 const openclawCommand = process.env.OPENCLAW_BIN || (process.platform === "win32" ? "openclaw.cmd" : "openclaw");
 const openclawMjs = process.env.APPDATA ? join(process.env.APPDATA, "npm", "node_modules", "openclaw", "openclaw.mjs") : "";
-const appVersion = "0.4.19";
+const appVersion = "0.4.20";
 const workflowIntakeApprovalTtlMs = 30 * 60 * 1000;
 
 const contentTypes = new Map([
@@ -71,11 +71,58 @@ function errorResponse(res, status, message, detail = null) {
 }
 
 function parseJson(text, fallback = null) {
+  const raw = String(text).replace(/^\uFEFF/, "").trim();
   try {
-    return JSON.parse(String(text).replace(/^\uFEFF/, ""));
+    return JSON.parse(raw);
   } catch {
-    return fallback;
+    const extracted = extractFirstJsonValue(raw);
+    if (extracted && extracted !== raw) {
+      try {
+        return JSON.parse(extracted);
+      } catch {
+        return fallback;
+      }
+    }
   }
+  return fallback;
+}
+
+function extractFirstJsonValue(text) {
+  const source = String(text || "");
+  const start = source.search(/[\[{]/);
+  if (start < 0) return "";
+  const open = source[start];
+  const close = open === "{" ? "}" : "]";
+  const stack = [close];
+  let inString = false;
+  let escaped = false;
+  for (let index = start + 1; index < source.length; index += 1) {
+    const char = source[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+    if (char === "{" || char === "[") {
+      stack.push(char === "{" ? "}" : "]");
+      continue;
+    }
+    if (char === "}" || char === "]") {
+      if (char !== stack[stack.length - 1]) return "";
+      stack.pop();
+      if (!stack.length) return source.slice(start, index + 1);
+    }
+  }
+  return "";
 }
 
 async function readJsonBody(req) {
@@ -133,6 +180,7 @@ The backend rejects create if the user did not confirm in the selected chat afte
 - Keep created jobs disabled unless the user explicitly asks to enable/start them. When activation was requested, include enabled:true and allowEnable:true in preview and create; the returned activation plan will say whether create will enable the job.
 - Use isolated cron sessions for repeating workflows unless the user explicitly wants the main chat context to grow.
 - Keep the cron prompt focused on the active step. Automator stores future rows and exposes a focused event log.
+- If a row reports blocked or failed, Automator holds that row and pauses the cron so it does not keep rerunning the same known blocker. Re-enable or run the job after resolving the blocker.
 - Do not ask the user for session ids, endpoint URLs, or command flags when the current session already provides them.
 - If the current session is dashboard/webchat and the user did not choose a configured messaging channel, use quiet delivery. OpenClaw cron notification channels are external channels such as Telegram, not dashboard webchat sessions.
 `;
@@ -433,25 +481,31 @@ function workflowAdvanceCommand(workflow, step, status) {
 function workflowStepMessage(workflow) {
   const step = workflow.steps[workflow.currentIndex] || workflow.steps[workflow.steps.length - 1];
   const lines = [
-    ": inspect what the agent sees, act as the user here, but also system/agent supervisor. This is important for the new pr, ill video record the process, this is important for output benchmarking the model, but you dont need to set up anything for thaOn it!Supervisor-run validation for OpenClaw Automator branch feature/workflow-event-log, latest pushed PR branch. Work in this repo when needed: D:\Projects\OpenClaw\openclawClickStart. Treat these as the always-available baseline context only: AGENTS.md, SOUL.md, TOOLS.md, IDENTITY.md, USER.md, HEARTBEAT.md, MEMORY.md. Do not assume any other large context has been injected; the user decides what extra context to provide. Use read-only inspection unless explicitly told otherwise. Do not modify files, format, commit, push, or create artifacts.",
+    "OpenClaw Automator step-plan controller.",
+    "Work only the active row in this prompt. Do not work future rows early.",
     "",
-    workflow.baseMessage,
+    "Overall goal:",
+    compactText(workflow.baseMessage, 3000),
     "",
-    "Important research and development, and final output to be realized on this session. Final output. Consequence: will auto apply and persist. After complete changes blocked for good, but dont mark them uneditable just call complete, claude will check this and circle this back to you and notify user only if missed something or there is something to fix. Starter info:",
     `- Workflow ID: ${workflow.id}`,
     `- Cron job ID: ${workflow.jobId || "pending"}`,
     `- Workflow: ${workflow.name || "Unnamed workflow"}`,
-    `- Focused past event log, read only if needed: ${workflowLogUrl(workflow)}`,
-    //`- Active step: ${step.index + 1} of ${workflow.steps.length}`,
-    `- Research and development name: ${step.name}`,
-    `- Deep thinking, safetywork, background work an concrete problem solving on: Inspect exactly what this run received, then the mechanics. ${step.action} Use the named baseline files plus the repo path and anything tat is awailable when more context is necessary.. A cross-review level quality output that resolves this longterm and does not need to be patched in the future by claude. If the job is impossible for you; stop, then research online or ask. But if you are capable getting this done then go ahead. Year: 2026.`,
+    `- Active step: ${step.index + 1} of ${workflow.steps.length}`,
+    `- Step name: ${step.name}`,
+    `- Focused event log, read only if needed: ${workflowLogUrl(workflow)}`,
+    "",
+    "Action:",
+    compactText(step.action, 2500),
   ];
-  if (step.done) lines.push(`- Done when: A concise COMPLETE/BLOCK/FAIL validation exists and ${step.done}`);
-  if (step.note) lines.push(`- State note: Common edge case under test: focused prompt has minimal context, but agent can use any available assets if needed.${step.note}`);
+  if (step.done) lines.push("", "Done when:", compactText(step.done, 1200));
+  if (step.note) lines.push("", "State note:", compactText(step.note, 1200));
   lines.push(
+    "",
+    "Report exactly one final state after working the row:",
     `If COMPLETE, call: ${workflowAdvanceCommand(workflow, step, "complete")}`,
     `If BLOCKED, call: ${workflowAdvanceCommand(workflow, step, "blocked")}`,
     `If FAILED, call: ${workflowAdvanceCommand(workflow, step, "failed")}`,
+    "Blocked or failed reports hold this row and pause the cron to avoid repeated wasted runs.",
   );
   return lines.join("\n");
 }
@@ -964,6 +1018,7 @@ function workflowIntakeSchema() {
       "Jobs created through this tool default to disabled.",
       "Activation requires enabled: true, userConfirmed: true, and allowEnable: true.",
       "The cron prompt receives only the active step plus a read-only past-event-log link.",
+      "Blocked or failed step reports hold the active row and pause the cron until the blocker is resolved.",
     ],
     request: {
       hint: "Original human wording, useful for audit and follow-up.",
@@ -1013,7 +1068,7 @@ function workflowIntakeDocs() {
     "- Do not call create just because you have the approval code. The backend checks the selected chat transcript for a later user-role confirmation message.",
     "- Do not reconstruct the create JSON from memory if preview returned createRequestTemplate. Use the template so approval hashing, delivery, schedule, and activation stay unchanged.",
     "- Keep future and previous rows out of the cron prompt. Automator stores them and rewrites the cron message when the active row advances.",
-    "- If a step is blocked or fails, the controller keeps the same active row for the next run.",
+    "- If a step is blocked or fails, the controller holds the same active row and pauses the cron to avoid repeated wasted runs. Re-enable or run the job after resolving the blocker.",
     "- Use isolated cron sessions unless the user explicitly wants the main chat timeline to grow.",
     "- If the source is dashboard/webchat and no configured messaging destination is chosen, use quiet delivery. OpenClaw cron cannot announce directly to dashboard webchat sessions.",
     "",
@@ -1863,6 +1918,10 @@ async function advanceWorkflow(id, body) {
     workflow.status = status === "blocked" ? "blocked" : "failed";
     workflow.steps[stepIndex].status = workflow.status;
     workflow.steps[stepIndex].lastSummary = summary;
+    const disableArgs = workflow.jobId
+      ? ["cron", "edit", workflow.jobId, "--disable", "--description", `${workflow.name} paused: ${workflow.status} at ${workflowStepLabel(step)}.`]
+      : null;
+    const disableResult = disableArgs ? await execOpenClaw(disableArgs, { timeoutMs: 30000 }) : null;
     workflowEvent(workflow, "step.held", {
       status: workflow.status,
       step,
@@ -1870,8 +1929,26 @@ async function advanceWorkflow(id, body) {
       title: `Active row held as ${workflow.status}`,
       detail: summary || "The active row was not advanced.",
     });
+    workflowEvent(workflow, "cron.paused", {
+      status: disableResult?.ok ? "disabled" : "failed",
+      step,
+      stepIndex,
+      title: disableResult?.ok ? "Cron paused for user intervention" : "Cron pause failed",
+      detail: disableResult?.ok
+        ? "The repeating job was disabled so the same blocked or failed row does not keep rerunning. Re-enable or run the job after resolving the blocker."
+        : disableResult?.stderr || disableResult?.error || "No cron job id was available to disable.",
+      command: disableArgs ? displayCommand(disableArgs) : "",
+      result: disableResult?.stdout || "",
+    });
     await writeWorkflow(workflow);
-    return { ok: true, advanced: false, workflow, reason: `step marked ${workflow.status}; active step unchanged` };
+    return {
+      ok: !disableResult || disableResult.ok,
+      advanced: false,
+      workflow,
+      command: disableArgs ? displayCommand(disableArgs) : "",
+      result: disableResult,
+      reason: `step marked ${workflow.status}; active step unchanged and cron paused`,
+    };
   }
 
   workflowEvent(workflow, "step.unknown_status", {
@@ -2128,6 +2205,7 @@ async function startServer() {
 
 export {
   buildWorkflowIntake,
+  parseJson,
   workflowIntakeCreateRequestTemplate,
   workflowIntakeDraftHash,
   workflowIntakeDocs,

@@ -265,7 +265,7 @@ const helpCatalog = {
   workflowStepPlan: {
     title: "Step plan controller",
     simple: "Let one repeating job move through steps.",
-    detailed: "For Every and cron-expression jobs, the backend stores the Step plan and creates a self-updating workflow controller. Each run receives only the current step and a focused event-log URL. Previous and future rows stay out of the cron prompt. The step advances only after the agent reports the current step complete through the local controller endpoint at 127.0.0.1:18890. Failed or blocked steps do not advance.",
+    detailed: "For Every and cron-expression jobs, the backend stores the Step plan and creates a self-updating workflow controller. Each run receives only the current step and a focused event-log URL. Previous and future rows stay out of the cron prompt. The step advances only after the agent reports the current step complete through the local controller endpoint at 127.0.0.1:18890. Failed or blocked steps hold the active row and pause the cron until the blocker is resolved.",
   },
   workflowName: {
     title: "Workflow",
@@ -1172,7 +1172,7 @@ const safetyCaseLookup = {
   stepController: {
     agent: "The model receives the current step and a local reporting command. It must report complete, blocked, or failed after working the step.",
     user: "One repeating cron job can walk through many configured steps, but only when the agent marks a step complete.",
-    why: "The controller prevents accidental skipping: blocked or failed reports keep the same active step for the next run.",
+    why: "The controller prevents accidental skipping and wasted repeats: blocked or failed reports keep the same active step and pause the cron until the blocker is resolved.",
     fix: "Use Every or Cron schedule, give each step a concrete done condition, and keep OpenClaw Automator running so the agent can call the local controller endpoint.",
   },
   ok: {
