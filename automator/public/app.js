@@ -265,7 +265,7 @@ const helpCatalog = {
   workflowStepPlan: {
     title: "Step plan controller",
     simple: "Let one repeating job move through steps.",
-    detailed: "For Every and cron-expression jobs, the backend stores the Step plan and creates a self-updating workflow controller. Each run receives only the current step and a focused event-log URL. Previous and future rows stay out of the cron prompt. The step advances only after the agent reports the current step complete through the local controller endpoint at 127.0.0.1:18890. Failed or blocked steps hold the active row and pause the cron until the blocker is resolved.",
+    detailed: "For Every and cron-expression jobs, the backend stores the Step plan and creates a self-updating workflow controller. Each run receives only the current step and a focused event-log URL. Previous and future rows stay out of the cron prompt. The step advances only after the agent reports the current step complete through the local controller endpoint at 127.0.0.1:18890. Progress keeps the same row scheduled for the next run. Failed or blocked steps hold the active row and pause the cron until the blocker is resolved.",
   },
   workflowName: {
     title: "Workflow",
@@ -275,7 +275,7 @@ const helpCatalog = {
   workflowSteps: {
     title: "Step plan",
     simple: "Fill one row for each step.",
-    detailed: "Each row has Step name, Next action, Done when, and State note. The app sends these as structured data to the backend, so users do not need to type separators or session syntax. Each repeating cron run receives only the active row, a read-only past-events link, and an advance/blocked reporting command.",
+    detailed: "Each row has Step name, Next action, Done when, and State note. The app sends these as structured data to the backend, so users do not need to type separators or session syntax. Each repeating cron run receives only the active row, a read-only past-events link, and complete/progress/blocked/failed reporting commands.",
   },
   workflowAddStep: {
     title: "Add row",
@@ -1170,9 +1170,9 @@ const safetyCaseLookup = {
     fix: "Pick a schedule, or change Answer to Message me or Quiet run.",
   },
   stepController: {
-    agent: "The model receives the current step and a local reporting command. It must report complete, blocked, or failed after working the step.",
-    user: "One repeating cron job can walk through many configured steps, but only when the agent marks a step complete.",
-    why: "The controller prevents accidental skipping and wasted repeats: blocked or failed reports keep the same active step and pause the cron until the blocker is resolved.",
+    agent: "The model receives the current step and local reporting commands. It can report complete, progress, blocked, or failed after working the step.",
+    user: "One repeating cron job can walk through many configured steps. Progress keeps the current row running; complete moves to the next row.",
+    why: "The controller prevents accidental skipping and wasted repeats: progress keeps the same active step scheduled, while blocked or failed reports pause the cron until the blocker is resolved.",
     fix: "Use Every or Cron schedule, give each step a concrete done condition, and keep OpenClaw Automator running so the agent can call the local controller endpoint.",
   },
   ok: {
@@ -1354,7 +1354,7 @@ function buildSafetyItems(payload) {
       text: !supportsStepController
         ? "Step plan controller needs an Every or Cron schedule. One-time jobs cannot safely walk a long plan."
         : stepCount
-        ? `This repeating cron can walk ${stepCount} configured steps, but it advances only after the agent reports the current step complete.`
+        ? `This repeating cron can walk ${stepCount} configured steps. Progress keeps a row scheduled; complete advances to the next row.`
         : "Step plan controller is on, but no steps are configured.",
     });
   }

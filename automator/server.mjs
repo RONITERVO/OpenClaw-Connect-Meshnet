@@ -180,6 +180,7 @@ The backend rejects create if the user did not confirm in the selected chat afte
 - Keep created jobs disabled unless the user explicitly asks to enable/start them. When activation was requested, include enabled:true and allowEnable:true in preview and create; the returned activation plan will say whether create will enable the job.
 - Use isolated cron sessions for repeating workflows unless the user explicitly wants the main chat context to grow.
 - Keep the cron prompt focused on the active step. Automator stores future rows and exposes a focused event log.
+- If a row reports progress, Automator holds that row and keeps the cron scheduled for the next run.
 - If a row reports blocked or failed, Automator holds that row and pauses the cron so it does not keep rerunning the same known blocker. Re-enable or run the job after resolving the blocker.
 - Do not ask the user for session ids, endpoint URLs, or command flags when the current session already provides them.
 - If the current session is dashboard/webchat and the user did not choose a configured messaging channel, use quiet delivery. OpenClaw cron notification channels are external channels such as Telegram, not dashboard webchat sessions.
@@ -483,6 +484,7 @@ function workflowStepMessage(workflow) {
   const lines = [
     "OpenClaw Automator step-plan controller.",
     "Work only the active row in this prompt. Do not work future rows early.",
+    "Treat this as a bounded goal run, not a quick chat reply.",
     "",
     "Overall goal:",
     compactText(workflow.baseMessage, 3000),
@@ -501,11 +503,20 @@ function workflowStepMessage(workflow) {
   if (step.note) lines.push("", "State note:", compactText(step.note, 1200));
   lines.push(
     "",
-    "Report exactly one final state after working the row:",
+    "Goal-mode work loop:",
+    "- If goal/progress tools are available, create or update a goal for this active row and keep it active until the row is proven complete, blocked, or failed.",
+    "- Use the available scheduled run to do real work: inspect current state, use relevant tools, produce artifacts, and save progress notes when the row is too large for one pass.",
+    "- Fast completion is allowed only when the Done when condition was already satisfied at run start or is proven after concrete work in this run.",
+    "- Do not report COMPLETE just because you produced some output. First audit the Done when condition against current evidence.",
+    "- If the Done when evidence is missing or weak but useful work was saved and the next cron run should continue, report PROGRESS.",
+    "- Use BLOCKED only when user input or an external state change is needed. Use FAILED only when the row cannot be recovered automatically.",
+    "",
+    "Report exactly one state after working the row:",
     `If COMPLETE, call: ${workflowAdvanceCommand(workflow, step, "complete")}`,
+    `If PROGRESS, call: ${workflowAdvanceCommand(workflow, step, "progress")}`,
     `If BLOCKED, call: ${workflowAdvanceCommand(workflow, step, "blocked")}`,
     `If FAILED, call: ${workflowAdvanceCommand(workflow, step, "failed")}`,
-    "Blocked or failed reports hold this row and pause the cron to avoid repeated wasted runs.",
+    "PROGRESS holds this row and keeps the cron scheduled. BLOCKED or FAILED holds this row and pauses the cron to avoid repeated wasted runs.",
   );
   return lines.join("\n");
 }
@@ -1018,6 +1029,7 @@ function workflowIntakeSchema() {
       "Jobs created through this tool default to disabled.",
       "Activation requires enabled: true, userConfirmed: true, and allowEnable: true.",
       "The cron prompt receives only the active step plus a read-only past-event-log link.",
+      "Progress reports hold the active row and keep the cron scheduled.",
       "Blocked or failed step reports hold the active row and pause the cron until the blocker is resolved.",
     ],
     request: {
@@ -1068,6 +1080,7 @@ function workflowIntakeDocs() {
     "- Do not call create just because you have the approval code. The backend checks the selected chat transcript for a later user-role confirmation message.",
     "- Do not reconstruct the create JSON from memory if preview returned createRequestTemplate. Use the template so approval hashing, delivery, schedule, and activation stay unchanged.",
     "- Keep future and previous rows out of the cron prompt. Automator stores them and rewrites the cron message when the active row advances.",
+    "- If a step reports progress, the controller holds the same active row and keeps the cron scheduled for the next run.",
     "- If a step is blocked or fails, the controller holds the same active row and pauses the cron to avoid repeated wasted runs. Re-enable or run the job after resolving the blocker.",
     "- Use isolated cron sessions unless the user explicitly wants the main chat timeline to grow.",
     "- If the source is dashboard/webchat and no configured messaging destination is chosen, use quiet delivery. OpenClaw cron cannot announce directly to dashboard webchat sessions.",
@@ -1912,6 +1925,28 @@ async function advanceWorkflow(id, body) {
     });
     await writeWorkflow(workflow);
     return { ok: editResult.ok, advanced: true, complete: false, workflow, command: displayCommand(editArgs), result: editResult };
+  }
+
+  if (["progress", "continue", "continued", "partial", "in_progress"].includes(status)) {
+    workflow.status = "active";
+    workflow.steps[stepIndex].status = "active";
+    workflow.steps[stepIndex].lastProgressAt = new Date().toISOString();
+    workflow.steps[stepIndex].lastSummary = summary;
+    workflowEvent(workflow, "step.progress", {
+      status: "active",
+      step,
+      stepIndex,
+      title: "Progress recorded; active row kept",
+      detail: summary || "The active row remains scheduled for the next cron run.",
+    });
+    await writeWorkflow(workflow);
+    return {
+      ok: true,
+      advanced: false,
+      complete: false,
+      workflow,
+      reason: "progress recorded; active step unchanged and cron remains enabled",
+    };
   }
 
   if (["blocked", "failed", "fail", "error"].includes(status)) {
