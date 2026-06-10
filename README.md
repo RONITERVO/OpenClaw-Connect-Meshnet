@@ -32,6 +32,7 @@ What it does:
 - shows an always-visible safety check when context, cron session, and reply destination do not line up
 - can use a spreadsheet-style step-plan controller that advances one repeating cron only after the agent reports the active step complete
 - keeps previous/future workflow rows out of cron prompts while exposing a focused read-only past-events log for the agent and user
+- gives each step-controller cron prompt a bounded `/goal`-style contract so agents preserve active-row scope, work from current evidence, and report complete only after the row is proven done
 - exposes a local workflow-intake tool so an OpenClaw agent can turn a short Telegram/webchat hint into a previewed step-controller cron, ask follow-ups when needed, and create it only after Automator sees a later user approval reply in that chat
 - installs an OpenClaw-visible local skill on startup so fresh chat sessions can discover the workflow-intake contract without relying on previous conversation history
 - shows delayed contextual labels after a 5-second hover, with Simple and Detailed modes
