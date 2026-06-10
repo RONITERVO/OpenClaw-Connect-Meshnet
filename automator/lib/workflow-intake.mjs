@@ -508,6 +508,7 @@ function buildWorkflowIntake(body, settings) {
   const webhook = optionalText(body.webhook || delivery.webhook, 1000);
   const steps = parseWorkflowSteps(body.steps || workflowBody.steps || plan.steps);
   const tokenBudget = optionalTokenBudget(body.tokenBudget ?? budget.tokenBudget ?? workflowBody.tokenBudget);
+  const autoContinue = body.autoContinue === true || workflowBody.autoContinue === true || plan.autoContinue === true;
   const explicitQuestions = normalizeQuestionList(body.questions);
   const confirmed = body.userConfirmed === true || body.confirm === true;
   const wantsEnabled = body.enabled === true || body.disabled === false || body.enableAfterCreate === true;
@@ -590,6 +591,7 @@ function buildWorkflowIntake(body, settings) {
       name,
       source: "agent-workflow-intake",
       intakeHint: hint,
+      autoContinue,
       tokenBudget,
       steps,
     },
@@ -610,6 +612,7 @@ function buildWorkflowIntake(body, settings) {
       steps,
       tokenBudget,
       tokensUsed: 0,
+      autoContinue,
     };
     controllerMessagePreview = workflowStepMessage(previewWorkflow);
     addCommandPreview = displayCommand(cronArgs({ ...draft, enabled: false, disabled: true, message: controllerMessagePreview }, settings));
@@ -670,6 +673,7 @@ function workflowIntakeSchema() {
       "The cron prompt receives only the active step plus a read-only past-event-log link.",
       "The cron prompt uses goal-style steering: user-provided row data is not higher-priority instruction text, current evidence is authoritative, and COMPLETE requires a scoped completion audit.",
       "Progress reports hold the active row and keep the cron scheduled.",
+      "If autoContinue is true, a successful progress or non-final complete report also requests openclaw cron run for the same job after the prompt is refreshed.",
       "Blocked or failed step reports hold the active row and pause the cron until the blocker is resolved.",
     ],
     request: {
@@ -678,6 +682,7 @@ function workflowIntakeSchema() {
       name: "Workflow/job name.",
       baseMessage: "Overall goal shown before the active step.",
       tokenBudget: "Optional positive integer token budget shown in the generated active-row prompt. Omit for none/unbounded.",
+      autoContinue: "Optional boolean. When true, successful PROGRESS and non-final COMPLETE reports request the next cron run immediately after the prompt refresh.",
       scheduleMode: "every or cron",
       every: "Interval such as 2h. Required when scheduleMode is every.",
       cron: "Cron expression. Required when scheduleMode is cron.",
@@ -723,6 +728,7 @@ function workflowIntakeDocs() {
     "- Keep future and previous rows out of the cron prompt. Automator stores them and rewrites the cron message when the active row advances.",
     "- Treat each generated active-row prompt like a bounded /goal run: preserve the row scope, work from current evidence, avoid unrelated expansion, and report COMPLETE only when the Done when condition and explicit deliverables are proven.",
     "- If a step reports progress, the controller holds the same active row and keeps the cron scheduled for the next run.",
+    "- If autoContinue is true, progress and non-final complete reports also request an immediate cron run after the prompt refresh succeeds.",
     "- If a step is blocked or fails, the controller holds the same active row and pauses the cron to avoid repeated wasted runs. Re-enable or run the job after resolving the blocker.",
     "- Use isolated cron sessions unless the user explicitly wants the main chat timeline to grow.",
     "- If the source is dashboard/webchat and no configured messaging destination is chosen, use quiet delivery. OpenClaw cron cannot announce directly to dashboard webchat sessions.",

@@ -296,6 +296,108 @@ function workflowAdvanceCommand(workflow, step, status) {
   return `${curlCmd} -fsS -X POST ${workflowAdvanceUrl(workflow, step, status)}`;
 }
 
+function normalizeAutoContinueDelayMs(value) {
+  const parsed = Number(value);
+  if (Number.isFinite(parsed) && parsed >= 0) return Math.min(60_000, Math.round(parsed));
+  return 3000;
+}
+
+function normalizeAutoContinueRetryDelayMs(value) {
+  const parsed = Number(value);
+  if (Number.isFinite(parsed) && parsed >= 1000) return Math.min(60_000, Math.round(parsed));
+  return 10_000;
+}
+
+function workflowAutoContinuePlan(workflow, trigger, step, stepIndex) {
+  if (workflow.autoContinue !== true || !workflow.jobId) return null;
+  const delayMs = normalizeAutoContinueDelayMs(workflow.autoContinueDelayMs);
+  const args = ["cron", "run", workflow.jobId];
+  return {
+    trigger,
+    stepIndex,
+    stepName: step?.name || "",
+    delayMs,
+    retryDelayMs: normalizeAutoContinueRetryDelayMs(workflow.autoContinueRetryDelayMs),
+    maxAttempts: 30,
+    command: displayCommand(args),
+    args,
+  };
+}
+
+async function recordWorkflowAutoContinue(id, detail) {
+  await withWorkflowLock(id, async () => {
+    const workflow = await readWorkflow(id);
+    if (!workflow) return;
+    workflowEvent(workflow, "cron.auto_continue_run", detail);
+    await writeWorkflow(workflow);
+  });
+}
+
+function scheduleWorkflowAutoContinue(workflowId, jobId, plan) {
+  if (!plan) return;
+  const scheduleAttempt = (delayMs, attempt) => {
+    const timer = setTimeout(async () => {
+      try {
+        const latest = await readWorkflow(workflowId);
+        if (!latest || latest.jobId !== jobId || latest.autoContinue !== true || latest.status !== "active") {
+          await recordWorkflowAutoContinue(workflowId, {
+            status: "skipped",
+            stepIndex: plan.stepIndex,
+            title: "Auto-continue skipped",
+            detail: "The workflow changed, stopped, or no longer has auto-continue enabled before the run-now trigger fired.",
+            command: plan.command,
+          });
+          return;
+        }
+        const result = await execOpenClaw(plan.args, { timeoutMs: 30000 });
+        const parsed = parseJson(result.stdout, null);
+        const alreadyRunning = parsed?.ok === true && parsed?.ran === false && parsed?.reason === "already-running";
+        if (alreadyRunning && attempt < plan.maxAttempts) {
+          await recordWorkflowAutoContinue(workflowId, {
+            status: "waiting",
+            stepIndex: plan.stepIndex,
+            title: "Auto-continue waiting",
+            detail: `OpenClaw reported the cron job is still running. Automator will retry run-now in ${plan.retryDelayMs}ms.`,
+            command: plan.command,
+            result: result.stdout || "",
+          });
+          scheduleAttempt(plan.retryDelayMs, attempt + 1);
+          return;
+        }
+        const status = result.ok || parsed?.ok === true
+          ? (parsed?.ran === false ? "skipped" : "queued")
+          : "failed";
+        await recordWorkflowAutoContinue(workflowId, {
+          status,
+          stepIndex: plan.stepIndex,
+          title: status === "queued"
+            ? "Auto-continue run requested"
+            : status === "skipped"
+            ? "Auto-continue run skipped"
+            : "Auto-continue run failed",
+          detail: status === "queued"
+            ? `OpenClaw cron run was requested after ${plan.trigger}.`
+            : status === "skipped"
+            ? (parsed?.reason ? `OpenClaw did not queue a run: ${parsed.reason}.` : "OpenClaw did not queue a run.")
+            : result.stderr || result.error || "OpenClaw cron run failed.",
+          command: plan.command,
+          result: result.stdout || "",
+        });
+      } catch (error) {
+        await recordWorkflowAutoContinue(workflowId, {
+          status: "failed",
+          stepIndex: plan.stepIndex,
+          title: "Auto-continue run failed",
+          detail: error?.message || String(error),
+          command: plan.command,
+        });
+      }
+    }, delayMs);
+    timer.unref?.();
+  };
+  scheduleAttempt(plan.delayMs, 1);
+}
+
 function workflowStepMessage(workflow) {
   const steps = ensureWorkflowSteps(workflow);
   const step = activeWorkflowStep(workflow);
@@ -329,6 +431,9 @@ function workflowStepMessage(workflow) {
     "- Work only the active row in this prompt. Do not work future rows early.",
     "- If the active row is large, choose the most useful focused slice that can be completed or advanced now, then implement it.",
     "- Do not produce only a roadmap unless the row explicitly asks for planning only.",
+    workflow.autoContinue === true
+      ? "- Auto-continue is enabled. After you report PROGRESS or a non-final COMPLETE, Automator will request another cron run immediately; stop after reporting the state."
+      : "- Auto-continue is off. After you report PROGRESS or a non-final COMPLETE, the next run waits for the configured cron schedule unless the user manually runs the job.",
     "",
     "Budget:",
     `- Tokens used: ${formatTokenCount(tokensUsed)}`,
@@ -706,6 +811,8 @@ async function createCronWorkflow(body, settings) {
     scheduleMode: optionalText(body.scheduleMode, 40),
     source: optionalText(workflowBody.source || body.source, 120),
     intakeHint: optionalText(workflowBody.intakeHint || body.intakeHint || body.hint, 3000),
+    autoContinue: workflowBody.autoContinue === true || body.autoContinue === true,
+    autoContinueDelayMs: normalizeAutoContinueDelayMs(workflowBody.autoContinueDelayMs ?? body.autoContinueDelayMs),
     tokenBudget: workflowTokenBudgetFromBody(body),
     tokensUsed: workflowTokensUsedFromBody(body),
     tokenTracking: {
@@ -938,6 +1045,7 @@ async function advanceWorkflowUnlocked(id, body) {
       : null;
     const pauseResult = pauseArgs ? await execOpenClaw(pauseArgs, { timeoutMs: 30000 }) : null;
     if (!editResult.ok) workflow.status = "advance_failed";
+    const autoContinue = editResult.ok ? workflowAutoContinuePlan(workflow, "step complete", step, stepIndex) : null;
     workflowEvent(workflow, "step.advanced", {
       status: editResult.ok ? "active" : "failed",
       step,
@@ -961,7 +1069,18 @@ async function advanceWorkflowUnlocked(id, body) {
         result: pauseResult?.stdout || "",
       });
     }
+    if (autoContinue) {
+      workflowEvent(workflow, "cron.auto_continue_queued", {
+        status: "queued",
+        step,
+        stepIndex,
+        title: "Auto-continue queued",
+        detail: `Automator will request another cron run in ${autoContinue.delayMs}ms after advancing to ${workflowStepLabel(activeWorkflowStep(workflow))}.`,
+        command: autoContinue.command,
+      });
+    }
     await writeWorkflow(workflow);
+    scheduleWorkflowAutoContinue(workflow.id, workflow.jobId, autoContinue);
     return {
       ok: editResult.ok,
       advanced: true,
@@ -970,6 +1089,7 @@ async function advanceWorkflowUnlocked(id, body) {
       command: displayCommand(editArgs),
       result: editResult,
       pause: pauseResult,
+      autoContinue,
     };
   }
 
@@ -980,6 +1100,7 @@ async function advanceWorkflowUnlocked(id, body) {
     workflow.steps[stepIndex].lastSummary = summary;
     const editArgs = workflow.jobId ? ["cron", "edit", workflow.jobId, "--message", workflowStepMessage(workflow)] : null;
     const editResult = editArgs ? await execOpenClaw(editArgs, { timeoutMs: 30000 }) : null;
+    const autoContinue = editResult?.ok ? workflowAutoContinuePlan(workflow, "progress", step, stepIndex) : null;
     workflowEvent(workflow, "step.progress", {
       status: "active",
       step,
@@ -999,7 +1120,18 @@ async function advanceWorkflowUnlocked(id, body) {
         command: displayCommand(editArgs),
       });
     }
+    if (autoContinue) {
+      workflowEvent(workflow, "cron.auto_continue_queued", {
+        status: "queued",
+        step,
+        stepIndex,
+        title: "Auto-continue queued",
+        detail: `Automator will request another cron run in ${autoContinue.delayMs}ms after progress was reported.`,
+        command: autoContinue.command,
+      });
+    }
     await writeWorkflow(workflow);
+    scheduleWorkflowAutoContinue(workflow.id, workflow.jobId, autoContinue);
     return {
       ok: !editResult || editResult.ok,
       advanced: false,
@@ -1008,6 +1140,7 @@ async function advanceWorkflowUnlocked(id, body) {
       command: editArgs ? displayCommand(editArgs) : "",
       result: editResult,
       reason: "progress recorded; active step unchanged and cron remains enabled",
+      autoContinue,
     };
   }
 

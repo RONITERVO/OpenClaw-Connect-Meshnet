@@ -52,6 +52,7 @@ const els = {
   bestEffortDeliveryToggle: $("bestEffortDeliveryToggle"),
   workflowSummary: $("workflowSummary"),
   workflowStepPlanToggle: $("workflowStepPlanToggle"),
+  workflowAutoContinueToggle: $("workflowAutoContinueToggle"),
   workflowNameInput: $("workflowNameInput"),
   workflowRows: $("workflowRows"),
   addStepBtn: $("addStepBtn"),
@@ -266,6 +267,11 @@ const helpCatalog = {
     title: "Step plan controller",
     simple: "Let one repeating job move through steps.",
     detailed: "For Every and cron-expression jobs, the backend stores the Step plan and creates a self-updating workflow controller. Each run receives only the current step and a focused event-log URL. Previous and future rows stay out of the cron prompt. The step advances only after the agent reports the current step complete through the local controller endpoint at 127.0.0.1:18890. Progress keeps the same row scheduled for the next run. Failed or blocked steps hold the active row and pause the cron until the blocker is resolved.",
+  },
+  workflowAutoContinue: {
+    title: "Continue immediately",
+    simple: "Start the next workflow run right after progress or a finished step.",
+    detailed: "When enabled, a successful PROGRESS report or non-final COMPLETE report refreshes the cron prompt and then calls openclaw cron run <job id>. This avoids waiting for the next timed schedule or manual Run click. The controller does not auto-run after BLOCKED, FAILED, final completion, or prompt rewrite failure.",
   },
   workflowName: {
     title: "Workflow",
@@ -670,6 +676,7 @@ function workflowFields() {
   const steps = readWorkflowRows();
   return {
     stepPlanEnabled: Boolean(els.workflowStepPlanToggle?.checked),
+    autoContinue: Boolean(els.workflowAutoContinueToggle?.checked),
     name: els.workflowNameInput.value.trim(),
     steps,
   };
@@ -681,7 +688,7 @@ function updateWorkflowSummary() {
   if (!fields.stepPlanEnabled) {
     els.workflowSummary.textContent = "Off";
   } else if (steps.length) {
-    els.workflowSummary.textContent = `${steps.length} controlled steps`;
+    els.workflowSummary.textContent = `${steps.length} controlled steps${fields.autoContinue ? " + instant" : ""}`;
   } else {
     els.workflowSummary.textContent = "No steps";
   }
@@ -1175,6 +1182,12 @@ const safetyCaseLookup = {
     why: "The controller prevents accidental skipping and wasted repeats: progress keeps the same active step scheduled, while blocked or failed reports pause the cron until the blocker is resolved.",
     fix: "Use Every or Cron schedule, give each step a concrete done condition, and keep OpenClaw Automator running so the agent can call the local controller endpoint.",
   },
+  stepControllerAutoContinue: {
+    agent: "After a successful PROGRESS or non-final COMPLETE report, Automator refreshes the cron prompt and requests openclaw cron run for the same job.",
+    user: "The next turn starts right away after the agent reports progress or finishes a step.",
+    why: "This removes the need to watch the workflow and manually click Run between steps, but it can keep spending tokens until the workflow completes, blocks, or fails.",
+    fix: "Leave Continue immediately off when you want the schedule interval to pace the work.",
+  },
   ok: {
     agent: "The model reads and replies through the same selected route as closely as OpenClaw exposes it.",
     user: "This is the normal safe path.",
@@ -1348,13 +1361,13 @@ function buildSafetyItems(payload) {
     const stepCount = normalizeWorkflowSteps(payload.workflow.steps).length;
     const supportsStepController = payload.scheduleMode === "every" || payload.scheduleMode === "cron";
     items.push({
-      caseId: "stepController",
+      caseId: payload.workflow?.autoContinue ? "stepControllerAutoContinue" : "stepController",
       severity: !supportsStepController || !stepCount ? "danger" : "notice",
       title: !supportsStepController ? "Step controller needs repeat" : stepCount ? "Step controller active" : "Step plan is empty",
       text: !supportsStepController
         ? "Step plan controller needs an Every or Cron schedule. One-time jobs cannot safely walk a long plan."
         : stepCount
-        ? `This repeating cron can walk ${stepCount} configured steps. Progress keeps a row scheduled; complete advances to the next row.`
+        ? `This repeating cron can walk ${stepCount} configured steps. Progress keeps a row scheduled; complete advances to the next row.${payload.workflow?.autoContinue ? " Continue immediately will request the next run after each progress or non-final complete report." : ""}`
         : "Step plan controller is on, but no steps are configured.",
     });
   }
@@ -1594,6 +1607,7 @@ window.addEventListener("resize", refreshVisibleHelpPosition);
     els.exactTimingToggle,
     els.bestEffortDeliveryToggle,
     els.workflowStepPlanToggle,
+    els.workflowAutoContinueToggle,
     els.workflowNameInput,
     els.jobNameInput,
     els.descriptionInput,

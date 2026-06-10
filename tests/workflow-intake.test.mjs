@@ -139,11 +139,16 @@ No --agent specified; the job will run with the configured default agent.`;
   const previewIntake = preview({
     ...baseRequest,
     tokenBudget: 25000,
+    workflow: {
+      autoContinue: true,
+    },
   });
   assert.equal(previewIntake.draft.tokenBudget, 25000);
   assert.equal(previewIntake.draft.workflow.tokenBudget, 25000);
+  assert.equal(previewIntake.draft.workflow.autoContinue, true);
   assert.match(previewIntake.controllerMessagePreview, /Token budget: 25000/);
   assert.match(previewIntake.controllerMessagePreview, /Tokens remaining: 25000/);
+  assert.match(previewIntake.controllerMessagePreview, /Auto-continue is enabled/);
 }
 
 console.log("workflow-intake tests passed");
