@@ -146,6 +146,32 @@ try {
   assert.equal(cronCommand[cronCommand.indexOf("--timeout-seconds") + 1], "600");
   const eventCommand = eventArgs({ sessionKey: "agent:main:test", text: "hello", timeoutMs: "bad" });
   assert.equal(eventCommand[eventCommand.indexOf("--timeout") + 1], "30000");
+  const tinyAgentTimeout = agentArgs({ sessionKey: "agent:main:test", message: "hello", timeoutSeconds: 0.1 }, commandSettings);
+  assert.equal(tinyAgentTimeout[tinyAgentTimeout.indexOf("--timeout") + 1], "1");
+  const tinyCronTimeout = cronArgs({
+    name: "test",
+    sessionKey: "agent:main:test",
+    message: "hello",
+    scheduleMode: "every",
+    every: "1h",
+    deliveryMode: "quiet",
+    timeoutSeconds: 0.1,
+  }, commandSettings);
+  assert.equal(tinyCronTimeout[tinyCronTimeout.indexOf("--timeout-seconds") + 1], "1");
+  const tinyEventTimeout = eventArgs({ sessionKey: "agent:main:test", text: "hello", timeoutMs: 0.1 });
+  assert.equal(tinyEventTimeout[tinyEventTimeout.indexOf("--timeout") + 1], "1");
+  const { execOpenClaw } = await import("../automator/lib/openclaw.mjs");
+  const fakeCompactOpenClaw = join(stateDir, "fake-compact-openclaw.mjs");
+  await writeFile(fakeCompactOpenClaw, 'process.stdout.write("abcdefghijklmnopqrst");\n', "utf8");
+  const previousOpenClawBin = process.env.OPENCLAW_BIN;
+  process.env.OPENCLAW_BIN = fakeCompactOpenClaw;
+  try {
+    const compactResult = await execOpenClaw([], { timeoutMs: 10000, stdoutMax: 0.1 });
+    assert.equal(compactResult.stdout, "abc... [truncated]");
+  } finally {
+    if (previousOpenClawBin == null) delete process.env.OPENCLAW_BIN;
+    else process.env.OPENCLAW_BIN = previousOpenClawBin;
+  }
 
   const { writeSettings } = await import("../automator/lib/state.mjs");
   const settings = await writeSettings({ defaultTimeoutSeconds: "nope" });

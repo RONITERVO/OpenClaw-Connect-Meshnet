@@ -10,9 +10,9 @@ function normalizeThinking(value, fallback = "xhigh") {
 function normalizePositiveInteger(value, fallback = null) {
   const selected = value == null || value === "" ? fallback : value;
   const parsed = Number(selected);
-  if (Number.isFinite(parsed) && parsed > 0) return Math.round(parsed);
+  if (Number.isFinite(parsed) && parsed > 0) return Math.max(1, Math.round(parsed));
   const fallbackParsed = Number(fallback);
-  return Number.isFinite(fallbackParsed) && fallbackParsed > 0 ? Math.round(fallbackParsed) : null;
+  return Number.isFinite(fallbackParsed) && fallbackParsed > 0 ? Math.max(1, Math.round(fallbackParsed)) : null;
 }
 
 function agentArgs(body, settings) {

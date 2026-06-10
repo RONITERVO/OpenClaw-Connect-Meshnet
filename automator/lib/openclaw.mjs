@@ -31,7 +31,7 @@ function execEnv() {
 
 function positiveIntegerOption(value, fallback) {
   const parsed = Number(value);
-  if (Number.isFinite(parsed) && parsed > 0) return Math.round(parsed);
+  if (Number.isFinite(parsed) && parsed > 0) return Math.max(1, Math.round(parsed));
   return fallback;
 }
 
