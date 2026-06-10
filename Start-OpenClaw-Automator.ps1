@@ -130,6 +130,66 @@ function Find-AvailableAutomatorPort {
     throw "Could not find a free Automator port starting at $StartPort."
 }
 
+function Get-ListeningPortsForProcess {
+    param([int] $ProcessId)
+    @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+        Where-Object { $_.OwningProcess -eq $ProcessId } |
+        Select-Object -ExpandProperty LocalPort -Unique)
+}
+
+function Find-RunningAutomatorFromState {
+    param(
+        [string] $PidPath,
+        [string] $LockPath
+    )
+    $candidatePids = @()
+    $candidatePorts = @()
+    if (Test-Path -LiteralPath $LockPath) {
+        try {
+            $runtime = Get-Content -LiteralPath $LockPath -Raw | ConvertFrom-Json
+            if ($runtime.port) {
+                $candidatePorts += [int] $runtime.port
+            }
+            if ($runtime.pid) {
+                $candidatePids += [int] $runtime.pid
+            }
+        } catch {
+        }
+    }
+    if (Test-Path -LiteralPath $PidPath) {
+        try {
+            $rawPid = (Get-Content -LiteralPath $PidPath -Raw).Trim()
+            if ($rawPid) {
+                $candidatePids += [int] $rawPid
+            }
+        } catch {
+        }
+    }
+    foreach ($candidatePid in @($candidatePids | Select-Object -Unique)) {
+        if (Get-Process -Id $candidatePid -ErrorAction SilentlyContinue) {
+            $candidatePorts += Get-ListeningPortsForProcess -ProcessId $candidatePid
+        }
+    }
+    foreach ($candidatePort in @($candidatePorts | Select-Object -Unique)) {
+        if (Test-AutomatorHealth -TargetPort $candidatePort) {
+            return [pscustomobject]@{
+                Port = $candidatePort
+                Url = "http://127.0.0.1:$candidatePort/"
+            }
+        }
+    }
+    return $null
+}
+
+function Open-AutomatorInstance {
+    param([object] $Instance)
+    Write-Host "OpenClaw Automator is already running:"
+    Write-Host "  $($Instance.Url)"
+    Write-Host ""
+    Write-Host "Opening browser..."
+    Start-Process $Instance.Url
+}
+
 if (-not (Get-Command node.exe -ErrorAction SilentlyContinue)) {
     Write-Host "ERROR: node.exe was not found. Install Node.js or add it to PATH." -ForegroundColor Red
     Read-Host "Press Enter to close"
@@ -152,17 +212,23 @@ if (-not (Test-Path -LiteralPath $serverPath)) {
 
 $stateDir = Join-Path $env:USERPROFILE ".openclaw\automator"
 $pidPath = Join-Path $stateDir "server.pid"
+$lockPath = Join-Path $stateDir "server.lock"
 New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
 
 $healthUrl = "http://127.0.0.1:$Port/api/health"
 $appUrl = "http://127.0.0.1:$Port/"
 
 if (Test-AutomatorHealth -TargetPort $Port) {
-    Write-Host "OpenClaw Automator is already running:"
-    Write-Host "  $appUrl"
-    Write-Host ""
-    Write-Host "Opening browser..."
-    Start-Process $appUrl
+    Open-AutomatorInstance ([pscustomobject]@{
+        Port = $Port
+        Url = $appUrl
+    })
+    exit 0
+}
+
+$runningAutomator = Find-RunningAutomatorFromState -PidPath $pidPath -LockPath $lockPath
+if ($runningAutomator) {
+    Open-AutomatorInstance $runningAutomator
     exit 0
 }
 

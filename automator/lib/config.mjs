@@ -13,6 +13,7 @@ export const stateDir = process.env.OPENCLAW_AUTOMATOR_STATE_DIR
 export const workflowsDir = join(stateDir, "workflows");
 export const settingsPath = join(stateDir, "settings.json");
 export const auditPath = join(stateDir, "automation-log.jsonl");
+export const runtimeLockPath = join(stateDir, "server.lock");
 export const workflowIntakeApprovalsPath = join(stateDir, "workflow-intake-approvals.json");
 export const workflowIntakeSkillSlug = "openclaw-automator-workflow-intake";
 export const openclawAgentSkillsDir = join(homedir(), ".openclaw", "agents", "main", "agent", "codex-home", "skills");

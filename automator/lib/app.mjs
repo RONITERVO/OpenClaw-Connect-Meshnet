@@ -1,7 +1,8 @@
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 
-import { appVersion, defaultSettings, port, settingsPath } from "./config.mjs";
+import { appVersion, defaultSettings, port, runtimeLockPath, settingsPath } from "./config.mjs";
 import { agentArgs, cronArgs, eventArgs, normalizePositiveInteger } from "./commands.mjs";
 import { collectBootstrap } from "./session-bootstrap.mjs";
 import { displayCommand, readRuntimeSettings, runCommand } from "./openclaw.mjs";
@@ -34,6 +35,58 @@ import {
   workflowControllerRequested,
   workflowLogText,
 } from "./workflows.mjs";
+import { parseJson } from "./utils.mjs";
+
+let runtimeLockOwned = false;
+
+function processIsRunning(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
+async function writeRuntimeLock() {
+  await writeFile(runtimeLockPath, JSON.stringify({
+    app: "OpenClaw Automator",
+    pid: process.pid,
+    port,
+    startedAt: new Date().toISOString(),
+  }, null, 2), { flag: "wx" });
+  runtimeLockOwned = true;
+}
+
+async function acquireRuntimeLock() {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await writeRuntimeLock();
+      return;
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      const existing = parseJson(await readFile(runtimeLockPath, "utf8").catch(() => ""), {});
+      const existingPid = Number(existing?.pid);
+      if (processIsRunning(existingPid)) {
+        const location = existing?.port ? ` at http://127.0.0.1:${existing.port}/` : "";
+        throw new Error(`OpenClaw Automator is already running${location} (PID ${existingPid}).`);
+      }
+      await rm(runtimeLockPath, { force: true });
+    }
+  }
+  await writeRuntimeLock();
+}
+
+function releaseRuntimeLock() {
+  if (!runtimeLockOwned) return;
+  runtimeLockOwned = false;
+  try {
+    rmSync(runtimeLockPath, { force: true });
+  } catch {
+    // Best effort cleanup; stale locks are validated by PID on next start.
+  }
+}
 
 function decodePathPart(value) {
   try {
@@ -309,16 +362,24 @@ function createAutomatorServer() {
 
 async function startServer() {
   await ensureStateDir();
-  await installWorkflowIntakeSkill();
-  if (!existsSync(settingsPath)) {
-    await writeSettings(defaultSettings);
-  }
+  await acquireRuntimeLock();
+  try {
+    await installWorkflowIntakeSkill();
+    if (!existsSync(settingsPath)) {
+      await writeSettings(defaultSettings);
+    }
 
-  const server = createAutomatorServer();
-  server.listen(port, "127.0.0.1", () => {
-    console.log(`OpenClaw Automator listening at http://127.0.0.1:${port}/`);
-  });
-  return server;
+    const server = createAutomatorServer();
+    server.once("error", releaseRuntimeLock);
+    server.on("close", releaseRuntimeLock);
+    server.listen(port, "127.0.0.1", () => {
+      console.log(`OpenClaw Automator listening at http://127.0.0.1:${port}/`);
+    });
+    return server;
+  } catch (error) {
+    releaseRuntimeLock();
+    throw error;
+  }
 }
 
 export {
