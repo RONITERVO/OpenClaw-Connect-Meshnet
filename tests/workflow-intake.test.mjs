@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 
 import {
   buildWorkflowIntake,
+  parseJson,
   workflowIntakeCreateRequestTemplate,
   workflowIntakeDraftHash,
 } from "../automator/server.mjs";
@@ -96,6 +97,32 @@ function create(body) {
   assert.equal(createIntake.draft.enabled, false);
   assert.match(previewIntake.warnings.join("\n"), /allowEnable/);
   assert.equal(workflowIntakeDraftHash(previewIntake.draft), workflowIntakeDraftHash(createIntake.draft));
+}
+
+{
+  const noisyStdout = `{
+  "id": "job-123",
+  "enabled": true
+}
+No --agent specified; the job will run with the configured default agent.`;
+  assert.deepEqual(parseJson(noisyStdout), { id: "job-123", enabled: true });
+}
+
+{
+  const previewIntake = preview({
+    ...baseRequest,
+    baseMessage: `${"Overall context. ".repeat(400)}Keep the job focused.`,
+  });
+  assert.equal(previewIntake.mode, "needs_confirmation");
+  assert.match(previewIntake.controllerMessagePreview, /OpenClaw Automator step-plan controller/);
+  assert.match(previewIntake.controllerMessagePreview, /Work only the active row/);
+  assert.match(previewIntake.controllerMessagePreview, /bounded goal run/);
+  assert.match(previewIntake.controllerMessagePreview, /Goal-mode work loop/);
+  assert.doesNotMatch(previewIntake.controllerMessagePreview, /Supervisor-run validation|benchmarking|D:ProjectsOpenClawopenclawClickStart/);
+  assert.ok(previewIntake.controllerMessagePreview.length < 9000);
+  assert.match(previewIntake.controllerMessagePreview, /If COMPLETE, call:/);
+  assert.match(previewIntake.controllerMessagePreview, /If PROGRESS, call:/);
+  assert.match(previewIntake.controllerMessagePreview, /PROGRESS holds this row and keeps the cron scheduled/);
 }
 
 console.log("workflow-intake tests passed");

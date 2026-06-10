@@ -77,6 +77,8 @@ The tool is intentionally narrow:
 - activation requires `enabled: true`, `allowEnable: true`, and explicit confirmation in both preview and create; workflow controllers still create the cron disabled first, rewrite the prompt with real ids, then enable it
 - dashboard/webchat requests are downgraded to quiet delivery unless the user chooses a configured messaging channel such as Telegram
 - the saved cron prompt receives only the active step plus a read-only event-log URL
+- progress reports keep the active row scheduled for the next cron run
+- blocked or failed step reports hold the active row and pause the cron, so a known blocker does not rerun forever until the user or agent resolves it
 
 Example instruction to paste to an OpenClaw agent:
 
