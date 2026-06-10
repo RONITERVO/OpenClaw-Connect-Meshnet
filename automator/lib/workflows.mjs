@@ -849,9 +849,9 @@ async function createCronWorkflow(body, settings) {
     message: workflowStepMessage(workflow),
   };
   const addArgs = cronArgs(firstBody, settings);
-  const addResult = await runCommand("cron", addArgs, 30000);
+  const addResult = await runCommand("cron", addArgs, 30000, { stdoutMax: 250000 });
   const jobId = addResult.json?.id || "";
-  if (!addResult.ok || !jobId) {
+  if (!jobId) {
     workflow.status = "create_failed";
     workflow.history.push({ at: new Date().toISOString(), status: "create_failed", summary: addResult.stderr || addResult.error || "cron add failed" });
     workflowEvent(workflow, "cron.create_failed", {
@@ -869,7 +869,7 @@ async function createCronWorkflow(body, settings) {
   workflowEvent(workflow, "cron.created", {
     status: workflow.status,
     title: "Cron job created",
-    detail: `OpenClaw cron job ${jobId} was created ${requestedEnabled ? "for activation" : "as disabled"}.`,
+    detail: `OpenClaw cron job ${jobId} was created ${requestedEnabled ? "for activation" : "as disabled"}.${addResult.ok ? "" : ` CLI warning: ${addResult.stderr || addResult.error || "cron add exited nonzero after creating the job"}`}`,
     command: displayCommand(addArgs),
   });
   await writeWorkflow(workflow);
@@ -878,7 +878,7 @@ async function createCronWorkflow(body, settings) {
   const editMessageResult = await execOpenClaw(editMessageArgs, { timeoutMs: 30000 });
   const enableArgs = requestedEnabled && editMessageResult.ok ? ["cron", "edit", jobId, "--enable"] : null;
   const enableResult = enableArgs ? await execOpenClaw(enableArgs, { timeoutMs: 30000 }) : null;
-  const ok = addResult.ok && editMessageResult.ok && (!requestedEnabled || Boolean(enableResult?.ok));
+  const ok = editMessageResult.ok && (!requestedEnabled || Boolean(enableResult?.ok));
   workflow.status = editMessageResult.ok
     ? (requestedEnabled ? (enableResult?.ok ? "active" : "enable_failed") : "disabled")
     : "prompt_update_failed";

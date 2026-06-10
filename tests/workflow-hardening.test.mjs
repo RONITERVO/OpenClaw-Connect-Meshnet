@@ -15,7 +15,13 @@ const delayMs = Number(process.env.FAKE_DELAY_MS || 0);
 if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
 appendFileSync(${JSON.stringify(fakeOpenClawLog)}, JSON.stringify(args) + "\\n");
 if (args[0] === "cron" && args[1] === "add") {
-  console.log(JSON.stringify({ id: process.env.FAKE_JOB_ID || "job-hardening" }));
+  const payload = { id: process.env.FAKE_JOB_ID || "job-hardening" };
+  if (process.env.FAKE_CRON_ADD_LARGE_JSON === "1") payload.message = "x".repeat(10000);
+  console.log(JSON.stringify(payload));
+  if (process.env.FAKE_CRON_ADD_WARN_EXIT === "1") {
+    console.error("No --agent specified; the job will run with the configured default agent.");
+    process.exit(1);
+  }
 } else if (args[0] === "cron" && args[1] === "edit" && args.includes("--disable") && process.env.FAKE_FAIL_DISABLE === "1") {
   console.error("disable failed");
   process.exit(19);
@@ -59,6 +65,71 @@ async function resetOpenClawLog() {
 }
 
 try {
+  process.env.FAKE_CRON_ADD_LARGE_JSON = "1";
+  process.env.FAKE_JOB_ID = "job-large-create-json";
+  await resetOpenClawLog();
+
+  const createLargeResult = await createCronWorkflow({
+    enabled: true,
+    disabled: false,
+    name: "Large Create",
+    baseMessage: "Run safely with a large created-job JSON response.",
+    sessionKey: "agent:main:dashboard:test",
+    scheduleMode: "every",
+    every: "30m",
+    deliveryMode: "quiet",
+    workflow: {
+      name: "Large Create",
+      steps: [
+        {
+          name: "First row",
+          action: "Do the first row.",
+          done: "The first row is done.",
+        },
+      ],
+    },
+  }, settings);
+
+  assert.equal(createLargeResult.ok, true);
+  assert.equal(createLargeResult.workflow.jobId, "job-large-create-json");
+  assert.equal(createLargeResult.workflow.status, "active");
+  process.env.FAKE_CRON_ADD_LARGE_JSON = "0";
+
+  process.env.FAKE_CRON_ADD_WARN_EXIT = "1";
+  process.env.FAKE_JOB_ID = "job-created-with-warning";
+  await resetOpenClawLog();
+
+  const createWarnResult = await createCronWorkflow({
+    enabled: true,
+    disabled: false,
+    name: "Warning Create",
+    baseMessage: "Run safely after a nonfatal create warning.",
+    sessionKey: "agent:main:dashboard:test",
+    scheduleMode: "every",
+    every: "30m",
+    deliveryMode: "quiet",
+    workflow: {
+      name: "Warning Create",
+      steps: [
+        {
+          name: "First row",
+          action: "Do the first row.",
+          done: "The first row is done.",
+        },
+      ],
+    },
+  }, settings);
+
+  assert.equal(createWarnResult.ok, true);
+  assert.equal(createWarnResult.workflow.jobId, "job-created-with-warning");
+  assert.equal(createWarnResult.workflow.status, "active");
+  assert.equal(createWarnResult.controller.enabled, true);
+  assert.ok(createWarnResult.workflow.events.some((event) => event.type === "cron.created" && /CLI warning/.test(event.detail)));
+  const createWarnCalls = await readOpenClawCalls();
+  assert.ok(createWarnCalls.some((args) => args[0] === "cron" && args[1] === "edit" && args[2] === "job-created-with-warning" && args.includes("--message")));
+  assert.ok(createWarnCalls.some((args) => args[0] === "cron" && args[1] === "edit" && args[2] === "job-created-with-warning" && args.includes("--enable")));
+  process.env.FAKE_CRON_ADD_WARN_EXIT = "0";
+
   process.env.FAKE_FAIL_MESSAGE = "1";
   process.env.FAKE_JOB_ID = "job-create-hardening";
   await resetOpenClawLog();

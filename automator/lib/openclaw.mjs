@@ -84,9 +84,9 @@ function displayCommand(args) {
   return `openclaw ${args.map(quoteArg).join(" ")}`;
 }
 
-async function runCommand(kind, args, timeoutMs) {
+async function runCommand(kind, args, timeoutMs, options = {}) {
   const startedAt = Date.now();
-  const result = await execOpenClaw(args, { timeoutMs });
+  const result = await execOpenClaw(args, { timeoutMs, ...options });
   const payload = {
     ok: result.ok,
     kind,
