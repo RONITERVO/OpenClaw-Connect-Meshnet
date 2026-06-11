@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OpenClaw Automator</title>
-  <link rel="stylesheet" href="./styles.css?v=0.4.18">
+  <link rel="stylesheet" href="./styles.css?v=0.4.20">
 </head>
 <body>
   <main class="shell">
@@ -172,6 +172,10 @@
               <input id="lightContextToggle" type="checkbox">
               <span>Light context</span>
             </label>
+            <label class="toggle cron-agent-control" data-help-key="useSubagents">
+              <input id="useSubagentsToggle" type="checkbox">
+              <span>Enable subagents</span>
+            </label>
             <label class="toggle schedule-control" data-schedule="at" data-help-key="deleteAfterRun">
               <input id="deleteAfterRunToggle" type="checkbox" checked>
               <span>Delete after run</span>
@@ -259,6 +263,10 @@
             <label class="field" data-help-key="agent">
               <span>Agent ID</span>
               <input id="agentInput" type="text" placeholder="main or ops">
+            </label>
+            <label class="field subagent-control" data-help-key="subagentAgents">
+              <span>Subagent agents</span>
+              <input id="subagentAgentsInput" type="text" placeholder="researcher,coder or leave blank">
             </label>
             <label class="field" data-help-key="model">
               <span>Model override</span>
@@ -350,6 +358,6 @@
     </div>
     <div id="helpBubbleText" class="help-text"></div>
   </div>
-  <script src="./app.js?v=0.4.18" type="module"></script>
+  <script src="./app.js?v=0.4.20" type="module"></script>
 </body>
 </html>

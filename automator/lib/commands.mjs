@@ -1,6 +1,8 @@
 import { cronNotifySupport } from "./channels.mjs";
 import { optionalText, requireText } from "./utils.mjs";
 
+const subagentCoordinationTools = ["agents_list", "sessions_spawn", "sessions_yield", "subagents"];
+
 function normalizeThinking(value, fallback = "xhigh") {
   const allowed = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
   const text = String(value || fallback).toLowerCase();
@@ -13,6 +15,56 @@ function normalizePositiveInteger(value, fallback = null) {
   if (Number.isFinite(parsed) && parsed > 0) return Math.max(1, Math.round(parsed));
   const fallbackParsed = Number(fallback);
   return Number.isFinite(fallbackParsed) && fallbackParsed > 0 ? Math.max(1, Math.round(fallbackParsed)) : null;
+}
+
+function normalizeToolList(value) {
+  const raw = Array.isArray(value) ? value : String(value || "").split(/[,\s]+/);
+  const seen = new Set();
+  const tools = [];
+  for (const item of raw) {
+    const tool = optionalText(item, 80);
+    if (!tool || seen.has(tool)) continue;
+    seen.add(tool);
+    tools.push(tool);
+  }
+  return tools;
+}
+
+function mergeToolList(value, extras = []) {
+  return normalizeToolList([...normalizeToolList(value), ...extras]);
+}
+
+function wantsSubagents(body = {}) {
+  return body.useSubagents === true || body.subagents === true || body.allowSubagents === true;
+}
+
+function normalizeSubagentTargets(value) {
+  const raw = Array.isArray(value) ? value : String(value || "").split(/[,\n]+/);
+  return raw
+    .map((item) => optionalText(item, 80))
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
+function applyCronMessageGuidance(message, body = {}) {
+  const text = requireText(message, "Message");
+  if (!wantsSubagents(body) || /Subagent coordination requested:/i.test(text)) return text;
+  const targets = normalizeSubagentTargets(body.subagentAgents || body.subagentTargets);
+  const targetLine = targets.length
+    ? `- Preferred target agents, if they are configured and allowed: ${targets.join(", ")}.`
+    : "- Use the requester/default agent unless agents_list is available and shows another configured and allowed target that better fits the task.";
+  return [
+    text,
+    "",
+    "Subagent coordination requested:",
+    "- Use sessions_spawn for independent research, long-running checks, or parallel work when useful and available.",
+    "- After spawning required child work, use sessions_yield when available and synthesize the returned child results into one final answer.",
+    "- Do not poll subagent status in a loop; inspect status only for debugging when status tools are available.",
+    targetLine,
+    "- If subagent tools are unavailable, explain the needed OpenClaw tool policy: use a coding/full profile or add tools.alsoAllow for sessions_spawn, sessions_yield, subagents, and agents_list.",
+    "- If a requested target agent is not available, explain the needed OpenClaw config: agents.defaults.subagents.allowAgents or the requester's agents.list[].subagents.allowAgents.",
+    "- Nested subagents require OpenClaw config agents.defaults.subagents.maxSpawnDepth >= 2; Automator cannot set that config from a cron command.",
+  ].join("\n");
 }
 
 function agentArgs(body, settings) {
@@ -72,7 +124,7 @@ function cronArgs(body, settings) {
   if (jobMode === "system-event") {
     args.push("--system-event", requireText(body.message, "System event"));
   } else {
-    args.push("--message", requireText(body.message, "Message"));
+    args.push("--message", applyCronMessageGuidance(body.message, body));
     const model = optionalText(body.model, 200);
     if (model) args.push("--model", model);
     const thinking = normalizeThinking(body.thinking, settings.defaultThinking);
@@ -103,8 +155,11 @@ function cronArgs(body, settings) {
   if (jobMode !== "system-event" && (deliveryMode === "notify" || deliveryMode === "webhook") && body.bestEffortDelivery) {
     args.push("--best-effort-deliver");
   }
-  const tools = Array.isArray(body.tools) ? body.tools.join(",") : optionalText(body.tools, 500);
-  if (tools) args.push("--tools", tools);
+  const requestedTools = normalizeToolList(body.tools);
+  const tools = jobMode !== "system-event" && wantsSubagents(body) && requestedTools.length
+    ? mergeToolList(requestedTools, subagentCoordinationTools)
+    : requestedTools;
+  if (tools.length) args.push("--tools", tools.join(","));
   const wake = optionalText(body.wake, 40);
   if (wake) args.push("--wake", wake);
   return args;
@@ -123,8 +178,12 @@ function eventArgs(body) {
 
 export {
   agentArgs,
+  applyCronMessageGuidance,
   cronArgs,
   eventArgs,
+  mergeToolList,
   normalizePositiveInteger,
   normalizeThinking,
+  normalizeToolList,
+  subagentCoordinationTools,
 };

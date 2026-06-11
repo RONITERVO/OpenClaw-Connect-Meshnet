@@ -139,6 +139,14 @@ function normalizeQuestionList(value) {
     .slice(0, 6);
 }
 
+function normalizeSubagentAgentList(value) {
+  const raw = Array.isArray(value) ? value : String(value || "").split(/[,\n]+/);
+  return raw
+    .map((item) => optionalText(item, 80))
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
 function workflowIntakeQuestions(missing) {
   const questions = [];
   const has = (field) => missing.some((item) => item.field === field);
@@ -204,7 +212,9 @@ function workflowIntakeCreateRequestTemplate(draft, approval = null) {
     hint: draft.intakeHint,
     sessionKey: draft.sessionKey,
     name: draft.name,
+    description: draft.description,
     baseMessage: draft.baseMessage,
+    sessionTarget: draft.sessionTarget,
     scheduleMode: draft.scheduleMode,
     every: draft.scheduleMode === "every" ? draft.every : "",
     cron: draft.scheduleMode === "cron" ? draft.cron : "",
@@ -213,10 +223,23 @@ function workflowIntakeCreateRequestTemplate(draft, approval = null) {
     replyChannel: draft.replyChannel,
     replyTo: draft.replyTo,
     webhook: draft.webhook,
+    bestEffortDelivery: draft.bestEffortDelivery,
+    expectFinal: draft.expectFinal,
+    lightContext: draft.lightContext,
+    agent: draft.agent,
+    model: draft.model,
+    thinking: draft.thinking,
+    timeoutSeconds: draft.timeoutSeconds,
     enabled: draft.enabled,
     disabled: draft.disabled,
     allowEnable: draft.enabled === true,
     tokenBudget: draft.tokenBudget,
+    autoContinue: draft.workflow.autoContinue,
+    useSubagents: draft.useSubagents,
+    subagentAgents: draft.subagentAgents,
+    tools: draft.tools,
+    stagger: draft.stagger,
+    wake: draft.wake,
     userConfirmed: true,
     approvalId: approval?.id || "<approval.id>",
     approvalCode: approval?.code || "<approval.code>",
@@ -509,6 +532,8 @@ function buildWorkflowIntake(body, settings) {
   const steps = parseWorkflowSteps(body.steps || workflowBody.steps || plan.steps);
   const tokenBudget = optionalTokenBudget(body.tokenBudget ?? budget.tokenBudget ?? workflowBody.tokenBudget);
   const autoContinue = body.autoContinue === true || workflowBody.autoContinue === true || plan.autoContinue === true;
+  const useSubagents = body.useSubagents === true || workflowBody.useSubagents === true || plan.useSubagents === true;
+  const subagentAgents = normalizeSubagentAgentList(body.subagentAgents || workflowBody.subagentAgents || plan.subagentAgents);
   const explicitQuestions = normalizeQuestionList(body.questions);
   const confirmed = body.userConfirmed === true || body.confirm === true;
   const wantsEnabled = body.enabled === true || body.disabled === false || body.enableAfterCreate === true;
@@ -548,6 +573,7 @@ function buildWorkflowIntake(body, settings) {
   if (deliveryMode === "quiet") warnings.push("Quiet delivery means the user must inspect Gateway/session history for results.");
   if (String(body.sessionTarget || "").toLowerCase() === "main") warnings.push("Main cron sessions can grow the selected chat context. Isolated is safer for repeating workflows.");
   if (body.lightContext === false) warnings.push("Full context was requested. Light context is the safer default for repeated workflow rows.");
+  if (useSubagents) warnings.push("Subagent-ready workflows add prompt guidance and merge sessions_spawn, sessions_yield, subagents, and agents_list into an explicit --tools allow-list when one is supplied. With no explicit Tools value, OpenClaw's configured tool profile/defaults decide availability. Messaging profiles may need tools.alsoAllow; named target agents still require OpenClaw subagents.allowAgents config; nested subagents require maxSpawnDepth >= 2.");
 
   const draft = {
     kind: "cron",
@@ -582,6 +608,8 @@ function buildWorkflowIntake(body, settings) {
     thinking: normalizeThinking(body.thinking, settings.defaultThinking),
     timeoutSeconds: normalizePositiveInteger(body.timeoutSeconds, settings.defaultTimeoutSeconds) || settings.defaultTimeoutSeconds,
     tokenBudget,
+    useSubagents,
+    subagentAgents,
     tools: Array.isArray(body.tools) ? body.tools.slice(0, 20).map((item) => optionalText(item, 80)).filter(Boolean) : optionalText(body.tools, 500),
     stagger: optionalText(body.stagger, 40),
     wake: optionalText(body.wake, 40),
@@ -591,6 +619,8 @@ function buildWorkflowIntake(body, settings) {
       name,
       source: "agent-workflow-intake",
       intakeHint: hint,
+      useSubagents,
+      subagentAgents,
       autoContinue,
       tokenBudget,
       steps,
@@ -613,6 +643,8 @@ function buildWorkflowIntake(body, settings) {
       tokenBudget,
       tokensUsed: 0,
       autoContinue,
+      useSubagents,
+      subagentAgents,
     };
     controllerMessagePreview = workflowStepMessage(previewWorkflow);
     addCommandPreview = displayCommand(cronArgs({ ...draft, enabled: false, disabled: true, message: controllerMessagePreview }, settings));
@@ -675,6 +707,7 @@ function workflowIntakeSchema() {
       "Progress reports hold the active row and keep the cron scheduled.",
       "If autoContinue is true, a successful progress or non-final complete report also requests openclaw cron run for the same job after the prompt is refreshed.",
       "Blocked or failed step reports hold the active row and pause the cron until the blocker is resolved.",
+      "Subagent-ready workflows add prompt guidance and merge coordination tools into explicit --tools allow-lists. With no explicit tools allow-list, OpenClaw's configured profile/defaults decide tool availability. Named target agents and nested subagents still require OpenClaw config allowAgents/maxSpawnDepth.",
     ],
     request: {
       hint: "Original human wording, useful for audit and follow-up.",
@@ -683,6 +716,8 @@ function workflowIntakeSchema() {
       baseMessage: "Overall goal shown before the active step.",
       tokenBudget: "Optional positive integer token budget shown in the generated active-row prompt. Omit for none/unbounded.",
       autoContinue: "Optional boolean. When true, successful PROGRESS and non-final COMPLETE reports request the next cron run immediately after the prompt refresh.",
+      useSubagents: "Optional boolean. When true, Automator makes the cron agent-turn subagent-ready by adding coordination guidance to the prompt and merging agents_list, sessions_spawn, sessions_yield, and subagents into an explicit --tools allow-list when one is supplied.",
+      subagentAgents: "Optional array or comma-separated configured agent ids to mention as preferred subagent targets. These still require OpenClaw subagents.allowAgents config.",
       scheduleMode: "every or cron",
       every: "Interval such as 2h. Required when scheduleMode is every.",
       cron: "Cron expression. Required when scheduleMode is cron.",
@@ -726,6 +761,7 @@ function workflowIntakeDocs() {
     "- Do not call create just because you have the approval code. The backend checks the selected chat transcript for a later user-role confirmation message.",
     "- Do not reconstruct the create JSON from memory if preview returned createRequestTemplate. Use the template so approval hashing, delivery, schedule, and activation stay unchanged.",
     "- Keep future and previous rows out of the cron prompt. Automator stores them and rewrites the cron message when the active row advances.",
+    "- For subagent-ready workflows, set useSubagents:true. If you also set tools, include the normal tools the job needs; Automator will merge in agents_list, sessions_spawn, sessions_yield, and subagents. If tools is omitted, OpenClaw's configured tool profile/defaults decide availability. Use subagentAgents only for configured target agent ids; if the target is not allowed, tell the user to update OpenClaw subagents.allowAgents. Nested subagents need maxSpawnDepth >= 2.",
     "- Treat each generated active-row prompt like a bounded /goal run: preserve the row scope, work from current evidence, avoid unrelated expansion, and report COMPLETE only when the Done when condition and explicit deliverables are proven.",
     "- If a step reports progress, the controller holds the same active row and keeps the cron scheduled for the next run.",
     "- If autoContinue is true, progress and non-final complete reports also request an immediate cron run after the prompt refresh succeeds.",

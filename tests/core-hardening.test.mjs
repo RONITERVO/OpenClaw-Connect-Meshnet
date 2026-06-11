@@ -144,6 +144,37 @@ try {
     timeoutSeconds: 0,
   }, commandSettings);
   assert.equal(cronCommand[cronCommand.indexOf("--timeout-seconds") + 1], "600");
+  const subagentCronCommand = cronArgs({
+    name: "subagent test",
+    sessionKey: "agent:main:test",
+    message: "parallel research",
+    scheduleMode: "every",
+    every: "1h",
+    deliveryMode: "notify",
+    replyChannel: "telegram",
+    replyTo: "123",
+    tools: "exec,read,sessions_spawn",
+    useSubagents: true,
+    subagentAgents: "researcher,coder",
+  }, commandSettings);
+  assert.equal(
+    subagentCronCommand[subagentCronCommand.indexOf("--tools") + 1],
+    "exec,read,sessions_spawn,agents_list,sessions_yield,subagents",
+  );
+  assert.match(subagentCronCommand[subagentCronCommand.indexOf("--message") + 1], /Subagent coordination requested:/);
+  assert.match(subagentCronCommand[subagentCronCommand.indexOf("--message") + 1], /researcher, coder/);
+  const defaultToolsSubagentCronCommand = cronArgs({
+    name: "subagent default tools",
+    sessionKey: "agent:main:test",
+    message: "parallel research",
+    scheduleMode: "every",
+    every: "1h",
+    deliveryMode: "quiet",
+    useSubagents: true,
+  }, commandSettings);
+  assert.equal(defaultToolsSubagentCronCommand.includes("--tools"), false);
+  assert.match(defaultToolsSubagentCronCommand[defaultToolsSubagentCronCommand.indexOf("--message") + 1], /Subagent coordination requested:/);
+  assert.match(defaultToolsSubagentCronCommand[defaultToolsSubagentCronCommand.indexOf("--message") + 1], /tools\.alsoAllow/);
   const eventCommand = eventArgs({ sessionKey: "agent:main:test", text: "hello", timeoutMs: "bad" });
   assert.equal(eventCommand[eventCommand.indexOf("--timeout") + 1], "30000");
   const tinyAgentTimeout = agentArgs({ sessionKey: "agent:main:test", message: "hello", timeoutSeconds: 0.1 }, commandSettings);

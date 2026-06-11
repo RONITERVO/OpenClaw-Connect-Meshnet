@@ -47,6 +47,7 @@ const els = {
   enabledToggle: $("enabledToggle"),
   expectFinalToggle: $("expectFinalToggle"),
   lightContextToggle: $("lightContextToggle"),
+  useSubagentsToggle: $("useSubagentsToggle"),
   deleteAfterRunToggle: $("deleteAfterRunToggle"),
   exactTimingToggle: $("exactTimingToggle"),
   bestEffortDeliveryToggle: $("bestEffortDeliveryToggle"),
@@ -65,6 +66,7 @@ const els = {
   replyToInput: $("replyToInput"),
   webhookInput: $("webhookInput"),
   agentInput: $("agentInput"),
+  subagentAgentsInput: $("subagentAgentsInput"),
   modelInput: $("modelInput"),
   thinkingInput: $("thinkingInput"),
   timeoutInput: $("timeoutInput"),
@@ -258,6 +260,11 @@ const helpCatalog = {
     simple: "Start with less extra memory.",
     detailed: "Adds --light-context to cron jobs. Use it for small reminders when you do not want a heavy context bootstrap.",
   },
+  useSubagents: {
+    title: "Enable subagents",
+    simple: "Let this scheduled agent delegate work to helper agents.",
+    detailed: "For agent cron jobs, adds subagent coordination guidance to the prompt. If Tools is filled, Automator merges agents_list, sessions_spawn, sessions_yield, and subagents into that explicit --tools allow-list. If Tools is blank, OpenClaw's configured tool profile/defaults decide availability. The cron job should usually use --session isolated, --expect-final, and either --announce or --no-deliver. Target agents still must be allowed in OpenClaw config with allowAgents; nested subagents require maxSpawnDepth >= 2.",
+  },
   workflowState: {
     title: "Step plan controller",
     simple: "Let a repeating job move through a list safely.",
@@ -372,6 +379,11 @@ const helpCatalog = {
     title: "Agent ID",
     simple: "Choose a specific OpenClaw agent.",
     detailed: "Passed as --agent for immediate runs and cron jobs. Leave empty to use OpenClaw routing/default agent behavior.",
+  },
+  subagentAgents: {
+    title: "Subagent agents",
+    simple: "Optional helper agent IDs for the scheduled agent to use.",
+    detailed: "Added to the cron prompt as preferred subagent targets. These are not CLI flags: OpenClaw only allows named subagent targets when the requester agent config includes them in subagents.allowAgents, or when the defaults allow them. Leave blank to use the requester/default agent or whatever agents_list reports as allowed. If subagent tools are unavailable, use a coding/full tool profile or add tools.alsoAllow in OpenClaw config.",
   },
   model: {
     title: "Model override",
@@ -498,6 +510,12 @@ const docsLinks = {
   "--tz": "https://docs.openclaw.ai/cli/cron#:~:text=--tz%20%3Ciana%3E",
   "--wake": "https://docs.openclaw.ai/cli/cron",
   "--webhook": "https://docs.openclaw.ai/cli/cron#:~:text=Use%20--webhook%20%3Curl%3E",
+  agents_list: "https://docs.openclaw.ai/tools/subagents#discovery",
+  allowAgents: "https://docs.openclaw.ai/tools/subagents#allowlist",
+  maxSpawnDepth: "https://docs.openclaw.ai/tools/subagents#nested-sub-agents",
+  sessions_spawn: "https://docs.openclaw.ai/tools/subagents#tool-sessions_spawn",
+  sessions_yield: "https://docs.openclaw.ai/tools/subagents#spawn-behavior",
+  subagents: "https://docs.openclaw.ai/tools/subagents#tool-subagents",
 };
 
 function escapeHtml(value) {
@@ -708,7 +726,7 @@ function helpTextFor(element) {
 
 function renderLinkedHelp(container, text) {
   container.replaceChildren();
-  const pattern = /--[a-z][a-z0-9-]*/gi;
+  const pattern = /--[a-z][a-z0-9-]*|agents_list|allowAgents|maxSpawnDepth|sessions_spawn|sessions_yield|subagents/gi;
   let cursor = 0;
   for (const match of text.matchAll(pattern)) {
     const flag = match[0];
@@ -985,6 +1003,13 @@ function updateScheduleControls() {
     const modes = (control.dataset.schedule || "").split(/\s+/);
     control.hidden = !modes.includes(mode);
   });
+  const isCronAgentMode = ["at", "every", "cron"].includes(mode) && els.jobModeInput.value !== "system-event";
+  document.querySelectorAll(".cron-agent-control").forEach((control) => {
+    control.hidden = !isCronAgentMode;
+  });
+  document.querySelectorAll(".subagent-control").forEach((control) => {
+    control.hidden = !isCronAgentMode || !els.useSubagentsToggle.checked;
+  });
   const presetId = currentSchedulePresetId();
   document.querySelectorAll("[data-schedule-preset]").forEach((button) => {
     button.classList.toggle("active", button.dataset.schedulePreset === presetId);
@@ -1063,6 +1088,8 @@ function collectPayload(kindOverride = null) {
     bestEffortDelivery: els.bestEffortDeliveryToggle.checked,
     expectFinal: els.expectFinalToggle.checked,
     lightContext: els.lightContextToggle.checked,
+    useSubagents: els.useSubagentsToggle.checked,
+    subagentAgents: els.subagentAgentsInput.value.trim(),
     deleteAfterRun: els.deleteAfterRunToggle.checked,
     exactTiming: els.exactTimingToggle.checked,
     replyChannel: els.replyChannelInput.value.trim(),
@@ -1152,6 +1179,12 @@ const safetyCaseLookup = {
     why: "Isolated is the safest default for repeated tasks.",
     fix: "Keep isolated unless the job must post into the main timeline.",
   },
+  subagentCron: {
+    agent: "The cron prompt includes subagent guidance. When Tools is explicitly filled, the command merges agents_list, sessions_spawn, sessions_yield, and subagents into --tools.",
+    user: "The scheduled agent can delegate independent work and then combine the child results before answering.",
+    why: "Subagents are useful for parallel research or long work. Tool availability still depends on OpenClaw's configured profile/defaults unless you provide an explicit Tools allow-list, named target agents depend on subagents.allowAgents, and nested delegation depends on maxSpawnDepth.",
+    fix: "Keep Wait for answer on, keep Cron session isolated for most jobs, and configure tools.alsoAllow, allowAgents, and maxSpawnDepth in OpenClaw when the selected profile does not already expose what the job needs.",
+  },
   mainCron: {
     agent: "The scheduled agent work writes directly into the main target session.",
     user: "Repeated runs can add context/messages into the session users may later chat in.",
@@ -1206,6 +1239,7 @@ function safetySettingsLine(payload, meta) {
     `delivery=${deliveryLabel(payload)}`,
     `agent override=${payload.agent || "none"}`,
     `model override=${payload.model || "none"}`,
+    `subagents=${payload.useSubagents ? "enabled" : "off"}`,
     `step controller=${payload.workflow?.stepPlanEnabled ? "on" : "off"}`,
   ].join("; ");
 }
@@ -1318,6 +1352,19 @@ function buildSafetyItems(payload) {
       severity: "notice",
       title: "Cron uses an isolated run",
       text: `The scheduled job is seeded from ${contextLabel}, then runs in its own isolated agent turn. That is usually safest for repeated jobs.`,
+    });
+  }
+
+  if (isCron && payload.useSubagents) {
+    items.push({
+      caseId: "subagentCron",
+      severity: payload.jobMode === "system-event" ? "danger" : payload.expectFinal ? "notice" : "warning",
+      title: payload.jobMode === "system-event" ? "Subagents need agent mode" : "Subagents enabled",
+      text: payload.jobMode === "system-event"
+        ? "System-event jobs do not run a normal agent prompt, so Automator cannot make them subagent-ready."
+        : payload.expectFinal
+        ? "Automator will add subagent prompt guidance and will merge coordination tools into --tools when Tools is explicitly filled."
+        : "Subagent guidance is enabled, but Wait for answer is off. The job may finish before child work is synthesized.",
     });
   }
 
@@ -1603,6 +1650,7 @@ window.addEventListener("resize", refreshVisibleHelpPosition);
     els.deliverToggle,
     els.expectFinalToggle,
     els.lightContextToggle,
+    els.useSubagentsToggle,
     els.deleteAfterRunToggle,
     els.exactTimingToggle,
     els.bestEffortDeliveryToggle,
@@ -1616,6 +1664,7 @@ window.addEventListener("resize", refreshVisibleHelpPosition);
     els.replyToInput,
     els.webhookInput,
     els.agentInput,
+    els.subagentAgentsInput,
     els.modelInput,
     els.thinkingInput,
     els.timeoutInput,

@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 
 import { port, workflowsDir } from "./config.mjs";
 import { appendAudit, ensureStateDir, writeJsonFileAtomic } from "./state.mjs";
-import { cronArgs } from "./commands.mjs";
+import { applyCronMessageGuidance, cronArgs } from "./commands.mjs";
 import { displayCommand, execOpenClaw, runCommand } from "./openclaw.mjs";
 import { sessionParts } from "./session-utils.mjs";
 import { compactText, optionalText, parseJson, pathIsInside, readTextTail, requireText } from "./utils.mjs";
@@ -269,6 +269,14 @@ function parseWorkflowSteps(value = []) {
     }));
 }
 
+function normalizeSubagentAgentList(value) {
+  const raw = Array.isArray(value) ? value : String(value || "").split(/[,\n]+/);
+  return raw
+    .map((item) => optionalText(item, 80))
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
 function workflowControllerRequested(body) {
   const workflow = body.workflow || {};
   const mode = String(body.scheduleMode || "now");
@@ -474,7 +482,7 @@ function workflowStepMessage(workflow) {
     `If FAILED, call: ${workflowAdvanceCommand(workflow, step, "failed")}`,
     "PROGRESS holds this row and keeps the cron scheduled. BLOCKED or FAILED holds this row and pauses the cron to avoid repeated wasted runs.",
   );
-  return lines.join("\n");
+  return applyCronMessageGuidance(lines.join("\n"), workflow);
 }
 
 
@@ -811,6 +819,8 @@ async function createCronWorkflow(body, settings) {
     scheduleMode: optionalText(body.scheduleMode, 40),
     source: optionalText(workflowBody.source || body.source, 120),
     intakeHint: optionalText(workflowBody.intakeHint || body.intakeHint || body.hint, 3000),
+    useSubagents: body.useSubagents === true || workflowBody.useSubagents === true,
+    subagentAgents: normalizeSubagentAgentList(body.subagentAgents || workflowBody.subagentAgents),
     autoContinue: workflowBody.autoContinue === true || body.autoContinue === true,
     autoContinueDelayMs: normalizeAutoContinueDelayMs(workflowBody.autoContinueDelayMs ?? body.autoContinueDelayMs),
     tokenBudget: workflowTokenBudgetFromBody(body),
@@ -846,6 +856,8 @@ async function createCronWorkflow(body, settings) {
     ...body,
     enabled: false,
     disabled: true,
+    useSubagents: workflow.useSubagents,
+    subagentAgents: workflow.subagentAgents,
     message: workflowStepMessage(workflow),
   };
   const addArgs = cronArgs(firstBody, settings);
