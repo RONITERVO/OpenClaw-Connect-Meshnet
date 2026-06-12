@@ -54,7 +54,7 @@ openclaw cron add `
 
 Advanced cron controls mirror the useful Gateway `/cron` fields: `--disabled`, `--description`, `--agent`, `--model`, `--webhook`, `--best-effort-deliver`, `--stagger`, `--exact`, `--delete-after-run`, and `--keep-after-run`.
 
-For a subagent-ready scheduled agent job, turn on **Enable subagents** in Advanced settings. Automator keeps the job as an agent-turn cron and appends prompt guidance so the scheduled agent treats advisory review as required when `sessions_spawn` is available. The prompt tells the parent agent to spawn at least three distinct advisory reviewers when practical: correctness/safety, completeness/user-intent, and quality/edge-case. Creative and non-coding jobs adapt those roles to continuity, style, audience, structure, factuality, rhythm, originality, or similar review lanes.
+For a subagent-ready scheduled agent job, turn on **Enable subagents** in Advanced settings. Automator keeps the job as an agent-turn cron and appends prompt guidance so the scheduled agent treats advisory review as required when `sessions_spawn` is available. The prompt tells the parent agent to spawn at least three distinct advisory reviewers when practical: correctness/safety, completeness/user-intent, and quality/edge-case. Creative and non-coding jobs adapt those roles to continuity, style, audience, structure, factuality, rhythm, originality, or similar review lanes. If `sessions_spawn` fails or is unavailable, including scope errors such as `missing scope: operator.write`, the parent immediately uses native read-only reviewers or explicit self-review passes instead and does not wait with `sessions_yield` after failed spawns.
 
 Subagents are side-effect-free advisors: they may research, critique, fact-check, brainstorm, compare, inspect context, or review draft output. They must not edit files, mutate workflow state, change configs, touch schedulers, send messages, commit code, or affect external systems. The parent agent validates their findings, fixes valid critique, owns all file/config/scheduler/message mutations, and reports COMPLETE or PROGRESS only after that review.
 
@@ -74,7 +74,7 @@ openclaw cron add `
 
 Named subagent target agents are OpenClaw config, not cron flags. If you fill **Subagent agents**, those IDs are included as preferred advisory targets in the prompt, but the requester agent must still allow them through `subagents.allowAgents`. Avoid nested subagents for normal Automator jobs. Nested advisory delegation requires `agents.defaults.subagents.maxSpawnDepth >= 2`.
 
-Tool availability still follows OpenClaw tool policy. The `coding` and `full` profiles expose `sessions_spawn` by default; messaging or custom profiles may need `tools.alsoAllow: ["sessions_spawn", "sessions_yield", "subagents", "agents_list"]`. For safer deployments, configure `tools.subagents.tools` so spawned helper agents stay research/review scoped. Avoid child `exec` access unless shell access is intentionally needed.
+Tool availability still follows OpenClaw tool policy. The `coding` and `full` profiles expose `sessions_spawn` by default; messaging or custom profiles may need `tools.alsoAllow: ["sessions_spawn", "sessions_yield", "subagents", "agents_list"]`. For safer deployments, configure `tools.subagents.tools` so spawned helper agents stay research/review scoped. Avoid child `exec` access unless shell access is intentionally needed. Prompt fallback handles missing tools or scopes for continuity; it does not grant OpenClaw session-spawn permission.
 
 ## Requirements
 

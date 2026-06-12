@@ -173,6 +173,9 @@ try {
   assert.match(nestedSubagentMessage, /COMPLETE also requires that no valid blocking subagent critique remains unresolved/);
   assert.match(nestedSubagentMessage, /Advisory subagent review is required/);
   assert.match(nestedSubagentMessage, /Spawn at least three distinct advisory reviewers when practical/);
+  assert.match(nestedSubagentMessage, /missing scope: operator\.write/);
+  assert.match(nestedSubagentMessage, /native read-only advisory reviewers/);
+  assert.match(nestedSubagentMessage, /Do not call sessions_yield after failed or unavailable spawns/);
   assert.match(nestedSubagentMessage, /correctness\/safety, completeness\/user-intent, and quality\/edge-case/);
   assert.match(nestedSubagentMessage, /tools\.subagents\.tools/);
   assert.match(nestedSubagentMessage, /researcher, coder/);

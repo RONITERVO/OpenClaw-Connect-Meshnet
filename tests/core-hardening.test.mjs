@@ -167,6 +167,9 @@ try {
   assert.match(subagentCronMessage, /Spawn at least three distinct advisory reviewers when practical/);
   assert.match(subagentCronMessage, /correctness\/safety, completeness\/user-intent, and quality\/edge-case/);
   assert.match(subagentCronMessage, /Subagents must not edit files, mutate workflow state, change configs, touch schedulers, send messages, commit code, or affect external systems/);
+  assert.match(subagentCronMessage, /missing scope: operator\.write/);
+  assert.match(subagentCronMessage, /native read-only advisory reviewers/);
+  assert.match(subagentCronMessage, /Do not call sessions_yield after failed or unavailable spawns/);
   assert.match(subagentCronMessage, /fix every valid critique that affects correctness, safety, user intent, continuity, completeness, or quality before reporting PROGRESS or COMPLETE/);
   assert.match(subagentCronMessage, /tools\.subagents\.tools/);
   assert.match(subagentCronMessage, /researcher, coder/);
