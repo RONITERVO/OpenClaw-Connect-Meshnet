@@ -262,8 +262,8 @@ const helpCatalog = {
   },
   useSubagents: {
     title: "Enable subagents",
-    simple: "Let this scheduled agent delegate work to helper agents.",
-    detailed: "For agent cron jobs, adds subagent coordination guidance to the prompt. If Tools is filled, Automator merges agents_list, sessions_spawn, sessions_yield, and subagents into that explicit --tools allow-list. If Tools is blank, OpenClaw's configured tool profile/defaults decide availability. The cron job should usually use --session isolated, --expect-final, and either --announce or --no-deliver. Target agents still must be allowed in OpenClaw config with allowAgents; nested subagents require maxSpawnDepth >= 2.",
+    simple: "Let this scheduled agent ask advisory helper agents for critique and research.",
+    detailed: "For agent cron jobs, adds advisory subagent guidance to the prompt. Subagents may research, critique, fact-check, brainstorm, compare, inspect, or review, but the parent agent validates findings, fixes valid critique, owns all side effects, and reports workflow state. If Tools is filled, Automator merges agents_list, sessions_spawn, sessions_yield, and subagents into that explicit --tools allow-list. If Tools is blank, OpenClaw's configured tool profile/defaults decide availability. For safer deployments, restrict spawned helpers with tools.subagents.tools and avoid child exec access unless shell access is intentionally needed.",
   },
   workflowState: {
     title: "Step plan controller",
@@ -383,7 +383,7 @@ const helpCatalog = {
   subagentAgents: {
     title: "Subagent agents",
     simple: "Optional helper agent IDs for the scheduled agent to use.",
-    detailed: "Added to the cron prompt as preferred subagent targets. These are not CLI flags: OpenClaw only allows named subagent targets when the requester agent config includes them in subagents.allowAgents, or when the defaults allow them. Leave blank to use the requester/default agent or whatever agents_list reports as allowed. If subagent tools are unavailable, use a coding/full tool profile or add tools.alsoAllow in OpenClaw config.",
+    detailed: "Added to the cron prompt as preferred advisory subagent targets. These are not CLI flags: OpenClaw only allows named subagent targets when the requester agent config includes them in subagents.allowAgents, or when the defaults allow them. Leave blank to use the requester/default agent or whatever agents_list reports as allowed. Configure tools.subagents.tools for read/review scoped helpers when you want side-effect-free delegation.",
   },
   model: {
     title: "Model override",
@@ -1180,10 +1180,10 @@ const safetyCaseLookup = {
     fix: "Keep isolated unless the job must post into the main timeline.",
   },
   subagentCron: {
-    agent: "The cron prompt includes subagent guidance. When Tools is explicitly filled, the command merges agents_list, sessions_spawn, sessions_yield, and subagents into --tools.",
-    user: "The scheduled agent can delegate independent work and then combine the child results before answering.",
-    why: "Subagents are useful for parallel research or long work. Tool availability still depends on OpenClaw's configured profile/defaults unless you provide an explicit Tools allow-list, named target agents depend on subagents.allowAgents, and nested delegation depends on maxSpawnDepth.",
-    fix: "Keep Wait for answer on, keep Cron session isolated for most jobs, and configure tools.alsoAllow, allowAgents, and maxSpawnDepth in OpenClaw when the selected profile does not already expose what the job needs.",
+    agent: "The cron prompt includes advisory subagent guidance. When Tools is explicitly filled, the command merges agents_list, sessions_spawn, sessions_yield, and subagents into --tools.",
+    user: "The scheduled agent can ask helpers for research, critique, fact-checking, brainstorming, comparison, context inspection, or draft review, then validate findings before answering.",
+    why: "Subagents expand perspective, not authority. The parent agent owns final output, file/config/scheduler/message mutations, and workflow state reports. Child tool availability still depends on OpenClaw's configured profile/defaults and tools.subagents.tools.",
+    fix: "Keep Wait for answer on, keep Cron session isolated for most jobs, restrict spawned helpers with tools.subagents.tools for safer deployments, and use subagents.allowAgents for named reviewer/researcher agents.",
   },
   mainCron: {
     agent: "The scheduled agent work writes directly into the main target session.",
@@ -1363,7 +1363,7 @@ function buildSafetyItems(payload) {
       text: payload.jobMode === "system-event"
         ? "System-event jobs do not run a normal agent prompt, so Automator cannot make them subagent-ready."
         : payload.expectFinal
-        ? "Automator will add subagent prompt guidance and will merge coordination tools into --tools when Tools is explicitly filled."
+        ? "Automator will add advisory subagent prompt guidance and will merge coordination tools into --tools when Tools is explicitly filled."
         : "Subagent guidance is enabled, but Wait for answer is off. The job may finish before child work is synthesized.",
     });
   }

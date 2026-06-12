@@ -166,8 +166,14 @@ try {
     nestedSubagentAdd[nestedSubagentAdd.indexOf("--tools") + 1],
     "exec,read,agents_list,sessions_spawn,sessions_yield,subagents",
   );
-  assert.match(nestedSubagentAdd[nestedSubagentAdd.indexOf("--message") + 1], /Subagent coordination requested:/);
-  assert.match(nestedSubagentAdd[nestedSubagentAdd.indexOf("--message") + 1], /researcher, coder/);
+  const nestedSubagentMessage = nestedSubagentAdd[nestedSubagentAdd.indexOf("--message") + 1];
+  assert.match(nestedSubagentMessage, /Advisory subagents:/);
+  assert.match(nestedSubagentMessage, /Subagent coordination requested:/);
+  assert.match(nestedSubagentMessage, /Fix every valid critique that affects correctness, safety, user intent, continuity, or quality/);
+  assert.match(nestedSubagentMessage, /COMPLETE also requires that no valid blocking subagent critique remains unresolved/);
+  assert.match(nestedSubagentMessage, /Subagents expand perspective, not authority/);
+  assert.match(nestedSubagentMessage, /tools\.subagents\.tools/);
+  assert.match(nestedSubagentMessage, /researcher, coder/);
 
   process.env.FAKE_FAIL_MESSAGE = "1";
   process.env.FAKE_JOB_ID = "job-create-hardening";

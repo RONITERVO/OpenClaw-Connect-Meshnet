@@ -54,7 +54,9 @@ openclaw cron add `
 
 Advanced cron controls mirror the useful Gateway `/cron` fields: `--disabled`, `--description`, `--agent`, `--model`, `--webhook`, `--best-effort-deliver`, `--stagger`, `--exact`, `--delete-after-run`, and `--keep-after-run`.
 
-For a subagent-ready scheduled agent job, turn on **Enable subagents** in Advanced settings. Automator keeps the job as an agent-turn cron and appends prompt guidance so the scheduled agent can spawn child work and synthesize the result. Leave **Tools** blank to keep OpenClaw's configured tool profile/defaults. If you fill **Tools**, Automator treats it as an explicit allow-list and merges in the subagent coordination tools:
+For a subagent-ready scheduled agent job, turn on **Enable subagents** in Advanced settings. Automator keeps the job as an agent-turn cron and appends prompt guidance so the scheduled agent can spawn advisory helper work and synthesize the result. Subagents are side-effect-free advisors: they may research, critique, fact-check, brainstorm, compare, inspect context, or review draft output. The parent agent validates their findings, fixes valid critique, owns all file/config/scheduler/message mutations, and reports COMPLETE or PROGRESS only after that review.
+
+Leave **Tools** blank to keep OpenClaw's configured tool profile/defaults. If you fill **Tools**, Automator treats it as an explicit allow-list and merges in the subagent coordination tools:
 
 ```powershell
 openclaw cron add `
@@ -68,9 +70,9 @@ openclaw cron add `
   --tools agents_list,sessions_spawn,sessions_yield,subagents
 ```
 
-Named subagent target agents are OpenClaw config, not cron flags. If you fill **Subagent agents**, those IDs are included as preferred targets in the prompt, but the requester agent must still allow them through `subagents.allowAgents`. Nested subagents require `agents.defaults.subagents.maxSpawnDepth >= 2`.
+Named subagent target agents are OpenClaw config, not cron flags. If you fill **Subagent agents**, those IDs are included as preferred advisory targets in the prompt, but the requester agent must still allow them through `subagents.allowAgents`. Avoid nested subagents for normal Automator jobs. Nested advisory delegation requires `agents.defaults.subagents.maxSpawnDepth >= 2`.
 
-Tool availability still follows OpenClaw tool policy. The `coding` and `full` profiles expose `sessions_spawn` by default; messaging or custom profiles may need `tools.alsoAllow: ["sessions_spawn", "sessions_yield", "subagents", "agents_list"]`.
+Tool availability still follows OpenClaw tool policy. The `coding` and `full` profiles expose `sessions_spawn` by default; messaging or custom profiles may need `tools.alsoAllow: ["sessions_spawn", "sessions_yield", "subagents", "agents_list"]`. For safer deployments, configure `tools.subagents.tools` so spawned helper agents stay research/review scoped. Avoid child `exec` access unless shell access is intentionally needed.
 
 ## Requirements
 
@@ -105,6 +107,6 @@ http://127.0.0.1:18890/agent-tools/workflow-intake
 
 The preview response includes `activation`, `addCommandPreview`, `enableCommandPreview`, and `createRequestTemplate`.
 
-Agents can request subagent-ready workflow controllers with `useSubagents: true` and optional `subagentAgents` as an array or comma-separated string. Those fields affect prompt guidance and, when an explicit `tools` allow-list is supplied, merge in the coordination tools. OpenClaw config still controls tool profiles, named target access, and nested subagent access.
+Agents can request subagent-ready workflow controllers with `useSubagents: true` and optional `subagentAgents` as an array or comma-separated string. Those fields affect advisory prompt guidance and, when an explicit `tools` allow-list is supplied, merge in the coordination tools. OpenClaw config still controls tool profiles, spawned-agent tool policy, named target access, and nested subagent access.
 
 For fresh-context reliability, use `createRequestTemplate` for the create call after the user replies with `approval.phrase`. Preserve its schedule, delivery, step rows, and `enabled`/`disabled`/`allowEnable` fields. Workflow controllers intentionally create the cron job disabled first, rewrite the prompt with the real workflow/job ids, then run the enable command when activation was explicitly requested and approved.

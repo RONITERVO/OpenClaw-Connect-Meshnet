@@ -161,8 +161,13 @@ try {
     subagentCronCommand[subagentCronCommand.indexOf("--tools") + 1],
     "exec,read,sessions_spawn,agents_list,sessions_yield,subagents",
   );
-  assert.match(subagentCronCommand[subagentCronCommand.indexOf("--message") + 1], /Subagent coordination requested:/);
-  assert.match(subagentCronCommand[subagentCronCommand.indexOf("--message") + 1], /researcher, coder/);
+  const subagentCronMessage = subagentCronCommand[subagentCronCommand.indexOf("--message") + 1];
+  assert.match(subagentCronMessage, /Subagent coordination requested:/);
+  assert.match(subagentCronMessage, /Subagents expand perspective, not authority/);
+  assert.match(subagentCronMessage, /must not mutate files, configs, schedulers, repositories, workflow state, messages, or external systems/);
+  assert.match(subagentCronMessage, /fix valid issues yourself, and only then report PROGRESS or COMPLETE/);
+  assert.match(subagentCronMessage, /tools\.subagents\.tools/);
+  assert.match(subagentCronMessage, /researcher, coder/);
   const defaultToolsSubagentCronCommand = cronArgs({
     name: "subagent default tools",
     sessionKey: "agent:main:test",
@@ -175,6 +180,7 @@ try {
   assert.equal(defaultToolsSubagentCronCommand.includes("--tools"), false);
   assert.match(defaultToolsSubagentCronCommand[defaultToolsSubagentCronCommand.indexOf("--message") + 1], /Subagent coordination requested:/);
   assert.match(defaultToolsSubagentCronCommand[defaultToolsSubagentCronCommand.indexOf("--message") + 1], /tools\.alsoAllow/);
+  assert.match(defaultToolsSubagentCronCommand[defaultToolsSubagentCronCommand.indexOf("--message") + 1], /tools\.subagents\.tools/);
   const eventCommand = eventArgs({ sessionKey: "agent:main:test", text: "hello", timeoutMs: "bad" });
   assert.equal(eventCommand[eventCommand.indexOf("--timeout") + 1], "30000");
   const tinyAgentTimeout = agentArgs({ sessionKey: "agent:main:test", message: "hello", timeoutSeconds: 0.1 }, commandSettings);

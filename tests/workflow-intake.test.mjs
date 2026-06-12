@@ -167,7 +167,12 @@ No --agent specified; the job will run with the configured default agent.`;
   assert.equal(previewIntake.draft.useSubagents, true);
   assert.deepEqual(previewIntake.draft.subagentAgents, ["researcher", "coder"]);
   assert.match(previewIntake.warnings.join("\n"), /sessions_spawn/);
+  assert.match(previewIntake.warnings.join("\n"), /advisory subagents/);
+  assert.match(previewIntake.warnings.join("\n"), /tools\.subagents\.tools/);
   assert.match(previewIntake.controllerMessagePreview, /Subagent coordination requested:/);
+  assert.match(previewIntake.controllerMessagePreview, /Advisory subagents:/);
+  assert.match(previewIntake.controllerMessagePreview, /fix valid issues yourself, and only then report PROGRESS or COMPLETE/);
+  assert.match(previewIntake.controllerMessagePreview, /no valid blocking subagent critique remains unresolved/);
   assert.match(previewIntake.controllerMessagePreview, /researcher, coder/);
   assert.doesNotMatch(previewIntake.addCommandPreview, /--tools/);
   const template = workflowIntakeCreateRequestTemplate(previewIntake.draft, {

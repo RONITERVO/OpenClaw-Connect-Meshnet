@@ -57,13 +57,17 @@ function applyCronMessageGuidance(message, body = {}) {
     text,
     "",
     "Subagent coordination requested:",
-    "- Use sessions_spawn for independent research, long-running checks, or parallel work when useful and available.",
+    "- Use sessions_spawn for side-effect-free advisory work: research, critique, fact-checking, brainstorming, comparison, context inspection, or review of draft output.",
+    "- Subagents expand perspective, not authority. They report findings only and must not mutate files, configs, schedulers, repositories, workflow state, messages, or external systems.",
+    "- The parent agent owns the final answer and all side effects. Review subagent findings, decide which critiques are valid, fix valid issues yourself, and only then report PROGRESS or COMPLETE.",
+    "- COMPLETE only when no valid blocking critique remains and the requested done condition is proven. Use PROGRESS when useful work advanced but valid critique or uncertainty remains. Use BLOCKED only when valid critique cannot be resolved without user input or external state.",
     "- After spawning required child work, use sessions_yield when available and synthesize the returned child results into one final answer.",
     "- Do not poll subagent status in a loop; inspect status only for debugging when status tools are available.",
     targetLine,
-    "- If subagent tools are unavailable, explain the needed OpenClaw tool policy: use a coding/full profile or add tools.alsoAllow for sessions_spawn, sessions_yield, subagents, and agents_list.",
+    "- If subagent tools are unavailable, explain the needed OpenClaw tool policy: expose sessions_spawn, sessions_yield, subagents, and agents_list through the requester profile or tools.alsoAllow.",
+    "- For safer deployments, restrict spawned helper agents with tools.subagents.tools so advisory subagents stay research/review scoped; avoid child exec access unless shell access is intentionally needed.",
     "- If a requested target agent is not available, explain the needed OpenClaw config: agents.defaults.subagents.allowAgents or the requester's agents.list[].subagents.allowAgents.",
-    "- Nested subagents require OpenClaw config agents.defaults.subagents.maxSpawnDepth >= 2; Automator cannot set that config from a cron command.",
+    "- Avoid nested subagents for normal Automator jobs. Nested advisory delegation requires OpenClaw config agents.defaults.subagents.maxSpawnDepth >= 2; Automator cannot set that config from a cron command.",
   ].join("\n");
 }
 
