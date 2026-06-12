@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 
 import { port, workflowsDir } from "./config.mjs";
 import { appendAudit, ensureStateDir, writeJsonFileAtomic } from "./state.mjs";
-import { cronArgs } from "./commands.mjs";
+import { applyCronMessageGuidance, cronArgs } from "./commands.mjs";
 import { displayCommand, execOpenClaw, runCommand } from "./openclaw.mjs";
 import { sessionParts } from "./session-utils.mjs";
 import { compactText, optionalText, parseJson, pathIsInside, readTextTail, requireText } from "./utils.mjs";
@@ -269,6 +269,14 @@ function parseWorkflowSteps(value = []) {
     }));
 }
 
+function normalizeSubagentAgentList(value) {
+  const raw = Array.isArray(value) ? value : String(value || "").split(/[,\n]+/);
+  return raw
+    .map((item) => optionalText(item, 80))
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
 function workflowControllerRequested(body) {
   const workflow = body.workflow || {};
   const mode = String(body.scheduleMode || "now");
@@ -457,10 +465,17 @@ function workflowStepMessage(workflow) {
     "- Use the available scheduled run to do real work: inspect current state, use relevant tools, produce artifacts, and save progress notes when the row is too large for one pass.",
     "- Keep changes scoped to the objective and active row. Avoid unrelated cleanup, broad research, formatting churn, and speculative abstractions.",
     "",
+    "Advisory subagents:",
+    "- If subagents are enabled or used, treat them as side-effect-free specialist advisors. They may research, critique, fact-check, brainstorm, compare options, inspect context, or review draft output.",
+    "- Subagents must not directly mutate files, workflow state, configs, schedulers, repositories, messages, or external systems. The parent agent owns all side effects and final output.",
+    "- Before reporting PROGRESS or COMPLETE, review all returned subagent findings. Fix every valid critique that affects correctness, safety, user intent, continuity, or quality before reporting state.",
+    "- Ignore or briefly note invalid, low-value, or deliberately deferred critiques. Report PROGRESS if valid critique remains but useful work advanced; report BLOCKED only when unresolved critique needs user input or external state.",
+    "",
     "Completion audit:",
     "- Preserve the full active-row scope. Do not redefine success around a smaller, safer, easier, or merely compatible result.",
     "- Fast completion is allowed only when the Done when condition was already satisfied at run start or is proven by current evidence after concrete work in this run.",
     "- Before reporting COMPLETE, verify the Done when condition and every explicit deliverable against current evidence.",
+    "- If subagents were used, COMPLETE also requires that no valid blocking subagent critique remains unresolved.",
     "- Treat uncertain, indirect, missing, or weak evidence as not complete. Gather stronger evidence or report PROGRESS.",
     "",
     "Blocked audit:",
@@ -474,7 +489,7 @@ function workflowStepMessage(workflow) {
     `If FAILED, call: ${workflowAdvanceCommand(workflow, step, "failed")}`,
     "PROGRESS holds this row and keeps the cron scheduled. BLOCKED or FAILED holds this row and pauses the cron to avoid repeated wasted runs.",
   );
-  return lines.join("\n");
+  return applyCronMessageGuidance(lines.join("\n"), workflow);
 }
 
 
@@ -811,6 +826,8 @@ async function createCronWorkflow(body, settings) {
     scheduleMode: optionalText(body.scheduleMode, 40),
     source: optionalText(workflowBody.source || body.source, 120),
     intakeHint: optionalText(workflowBody.intakeHint || body.intakeHint || body.hint, 3000),
+    useSubagents: body.useSubagents === true || workflowBody.useSubagents === true,
+    subagentAgents: normalizeSubagentAgentList(body.subagentAgents || workflowBody.subagentAgents),
     autoContinue: workflowBody.autoContinue === true || body.autoContinue === true,
     autoContinueDelayMs: normalizeAutoContinueDelayMs(workflowBody.autoContinueDelayMs ?? body.autoContinueDelayMs),
     tokenBudget: workflowTokenBudgetFromBody(body),
@@ -846,6 +863,8 @@ async function createCronWorkflow(body, settings) {
     ...body,
     enabled: false,
     disabled: true,
+    useSubagents: workflow.useSubagents,
+    subagentAgents: workflow.subagentAgents,
     message: workflowStepMessage(workflow),
   };
   const addArgs = cronArgs(firstBody, settings);

@@ -1,6 +1,8 @@
 import { cronNotifySupport } from "./channels.mjs";
 import { optionalText, requireText } from "./utils.mjs";
 
+const subagentCoordinationTools = ["agents_list", "sessions_spawn", "sessions_yield", "subagents"];
+
 function normalizeThinking(value, fallback = "xhigh") {
   const allowed = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
   const text = String(value || fallback).toLowerCase();
@@ -13,6 +15,65 @@ function normalizePositiveInteger(value, fallback = null) {
   if (Number.isFinite(parsed) && parsed > 0) return Math.max(1, Math.round(parsed));
   const fallbackParsed = Number(fallback);
   return Number.isFinite(fallbackParsed) && fallbackParsed > 0 ? Math.max(1, Math.round(fallbackParsed)) : null;
+}
+
+function normalizeToolList(value) {
+  const raw = Array.isArray(value) ? value : String(value || "").split(/[,\s]+/);
+  const seen = new Set();
+  const tools = [];
+  for (const item of raw) {
+    const tool = optionalText(item, 80);
+    if (!tool || seen.has(tool)) continue;
+    seen.add(tool);
+    tools.push(tool);
+  }
+  return tools;
+}
+
+function mergeToolList(value, extras = []) {
+  return normalizeToolList([...normalizeToolList(value), ...extras]);
+}
+
+function wantsSubagents(body = {}) {
+  return body.useSubagents === true || body.subagents === true || body.allowSubagents === true;
+}
+
+function normalizeSubagentTargets(value) {
+  const raw = Array.isArray(value) ? value : String(value || "").split(/[,\n]+/);
+  return raw
+    .map((item) => optionalText(item, 80))
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
+function applyCronMessageGuidance(message, body = {}) {
+  const text = requireText(message, "Message");
+  if (!wantsSubagents(body) || /Subagent coordination requested:/i.test(text)) return text;
+  const targets = normalizeSubagentTargets(body.subagentAgents || body.subagentTargets);
+  const targetLine = targets.length
+    ? `- Preferred target agents, if they are configured and allowed: ${targets.join(", ")}.`
+    : "- Use the requester/default agent unless agents_list is available and shows another configured and allowed target that better fits the task.";
+  return [
+    text,
+    "",
+    "Subagent coordination requested:",
+    "- Advisory subagent review is required for this run when sessions_spawn is available; do not treat it as optional.",
+    "- After understanding the task and before finalizing work, use sessions_spawn to create multiple side-effect-free reviewer subagents.",
+    "- Spawn at least three distinct advisory reviewers when practical: correctness/safety, completeness/user-intent, and quality/edge-case.",
+    "- For creative or non-coding work, adapt reviewer roles to the task, such as continuity, style, audience, structure, factuality, rhythm, or originality.",
+    "- Each subagent may only research, critique, fact-check, brainstorm, compare, inspect context, or review draft output. Subagents must not edit files, mutate workflow state, change configs, touch schedulers, send messages, commit code, or affect external systems.",
+    "- If sessions_spawn fails or is unavailable, including missing scope: operator.write or another authorization/tool error, immediately use the current agent runtime's native read-only advisory reviewers if available. If no native reviewer mechanism exists, run three explicit self-review passes using the same reviewer lanes.",
+    "- Use sessions_yield only after OpenClaw sessions_spawn actually created reviewer sessions. Do not call sessions_yield after failed or unavailable spawns, and never end the run after yielding without reporting PROGRESS, COMPLETE, BLOCKED, or FAILED.",
+    "- After successful reviewer creation, use the matching wait/yield mechanism when available and wait for findings. Treat their feedback seriously.",
+    "- The parent agent must review every returned critique, decide whether it is valid, invalid, or intentionally deferred, and fix every valid critique that affects correctness, safety, user intent, continuity, completeness, or quality before reporting PROGRESS or COMPLETE.",
+    "- The parent agent owns all side effects and final output. Report COMPLETE only when the requested done condition is proven and no valid blocking subagent critique remains unresolved. Report PROGRESS if useful work advanced but valid critique, uncertainty, or follow-up remains.",
+    "- Do not poll subagent status in a loop; inspect status only for debugging when status tools are available.",
+    targetLine,
+    "- If OpenClaw subagent tools are unavailable, continue through the fallback review path and include the needed OpenClaw tool policy in the final report: expose sessions_spawn, sessions_yield, subagents, and agents_list through the requester profile or tools.alsoAllow.",
+    "- For safer deployments, restrict spawned helper agents with tools.subagents.tools so advisory subagents stay research/review scoped; avoid child exec access unless shell access is intentionally needed.",
+    "- If a requested target agent is not available, explain the needed OpenClaw config: agents.defaults.subagents.allowAgents or the requester's agents.list[].subagents.allowAgents.",
+    "- Avoid nested subagents for normal Automator jobs. Nested advisory delegation requires OpenClaw config agents.defaults.subagents.maxSpawnDepth >= 2; Automator cannot set that config from a cron command.",
+  ].join("\n");
 }
 
 function agentArgs(body, settings) {
@@ -72,7 +133,7 @@ function cronArgs(body, settings) {
   if (jobMode === "system-event") {
     args.push("--system-event", requireText(body.message, "System event"));
   } else {
-    args.push("--message", requireText(body.message, "Message"));
+    args.push("--message", applyCronMessageGuidance(body.message, body));
     const model = optionalText(body.model, 200);
     if (model) args.push("--model", model);
     const thinking = normalizeThinking(body.thinking, settings.defaultThinking);
@@ -103,8 +164,11 @@ function cronArgs(body, settings) {
   if (jobMode !== "system-event" && (deliveryMode === "notify" || deliveryMode === "webhook") && body.bestEffortDelivery) {
     args.push("--best-effort-deliver");
   }
-  const tools = Array.isArray(body.tools) ? body.tools.join(",") : optionalText(body.tools, 500);
-  if (tools) args.push("--tools", tools);
+  const requestedTools = normalizeToolList(body.tools);
+  const tools = jobMode !== "system-event" && wantsSubagents(body) && requestedTools.length
+    ? mergeToolList(requestedTools, subagentCoordinationTools)
+    : requestedTools;
+  if (tools.length) args.push("--tools", tools.join(","));
   const wake = optionalText(body.wake, 40);
   if (wake) args.push("--wake", wake);
   return args;
@@ -123,8 +187,12 @@ function eventArgs(body) {
 
 export {
   agentArgs,
+  applyCronMessageGuidance,
   cronArgs,
   eventArgs,
+  mergeToolList,
   normalizePositiveInteger,
   normalizeThinking,
+  normalizeToolList,
+  subagentCoordinationTools,
 };

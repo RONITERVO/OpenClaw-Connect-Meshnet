@@ -47,6 +47,7 @@ const els = {
   enabledToggle: $("enabledToggle"),
   expectFinalToggle: $("expectFinalToggle"),
   lightContextToggle: $("lightContextToggle"),
+  useSubagentsToggle: $("useSubagentsToggle"),
   deleteAfterRunToggle: $("deleteAfterRunToggle"),
   exactTimingToggle: $("exactTimingToggle"),
   bestEffortDeliveryToggle: $("bestEffortDeliveryToggle"),
@@ -65,6 +66,7 @@ const els = {
   replyToInput: $("replyToInput"),
   webhookInput: $("webhookInput"),
   agentInput: $("agentInput"),
+  subagentAgentsInput: $("subagentAgentsInput"),
   modelInput: $("modelInput"),
   thinkingInput: $("thinkingInput"),
   timeoutInput: $("timeoutInput"),
@@ -258,6 +260,11 @@ const helpCatalog = {
     simple: "Start with less extra memory.",
     detailed: "Adds --light-context to cron jobs. Use it for small reminders when you do not want a heavy context bootstrap.",
   },
+  useSubagents: {
+    title: "Enable subagents",
+    simple: "Require advisory helper review before the scheduled agent finishes.",
+    detailed: "For agent cron jobs, adds advisory subagent guidance to the prompt. When sessions_spawn is available, the parent should spawn multiple side-effect-free reviewers before finalizing work, with at least correctness/safety, completeness/user-intent, and quality/edge-case lanes when practical. Creative and non-coding jobs adapt those lanes to the task. If sessions_spawn fails or is unavailable, including missing scope: operator.write, the parent immediately uses native read-only reviewers or explicit self-review passes and does not wait with sessions_yield after failed spawns. Subagents may research, critique, fact-check, brainstorm, compare, inspect, or review, but the parent validates findings, fixes valid critique, owns all side effects, and reports workflow state. If Tools is filled, Automator merges agents_list, sessions_spawn, sessions_yield, and subagents into that explicit --tools allow-list. If Tools is blank, OpenClaw's configured tool profile/defaults decide availability. For safer deployments, restrict spawned helpers with tools.subagents.tools and avoid child exec access unless shell access is intentionally needed.",
+  },
   workflowState: {
     title: "Step plan controller",
     simple: "Let a repeating job move through a list safely.",
@@ -372,6 +379,11 @@ const helpCatalog = {
     title: "Agent ID",
     simple: "Choose a specific OpenClaw agent.",
     detailed: "Passed as --agent for immediate runs and cron jobs. Leave empty to use OpenClaw routing/default agent behavior.",
+  },
+  subagentAgents: {
+    title: "Subagent agents",
+    simple: "Optional helper agent IDs for the scheduled agent to use.",
+    detailed: "Added to the cron prompt as preferred advisory subagent targets. These are not CLI flags: OpenClaw only allows named subagent targets when the requester agent config includes them in subagents.allowAgents, or when the defaults allow them. Leave blank to use the requester/default agent or whatever agents_list reports as allowed. Configure tools.subagents.tools for read/review scoped helpers when you want side-effect-free delegation.",
   },
   model: {
     title: "Model override",
@@ -498,6 +510,12 @@ const docsLinks = {
   "--tz": "https://docs.openclaw.ai/cli/cron#:~:text=--tz%20%3Ciana%3E",
   "--wake": "https://docs.openclaw.ai/cli/cron",
   "--webhook": "https://docs.openclaw.ai/cli/cron#:~:text=Use%20--webhook%20%3Curl%3E",
+  agents_list: "https://docs.openclaw.ai/tools/subagents#discovery",
+  allowAgents: "https://docs.openclaw.ai/tools/subagents#allowlist",
+  maxSpawnDepth: "https://docs.openclaw.ai/tools/subagents#nested-sub-agents",
+  sessions_spawn: "https://docs.openclaw.ai/tools/subagents#tool-sessions_spawn",
+  sessions_yield: "https://docs.openclaw.ai/tools/subagents#spawn-behavior",
+  subagents: "https://docs.openclaw.ai/tools/subagents#tool-subagents",
 };
 
 function escapeHtml(value) {
@@ -708,7 +726,7 @@ function helpTextFor(element) {
 
 function renderLinkedHelp(container, text) {
   container.replaceChildren();
-  const pattern = /--[a-z][a-z0-9-]*/gi;
+  const pattern = /--[a-z][a-z0-9-]*|agents_list|allowAgents|maxSpawnDepth|sessions_spawn|sessions_yield|subagents/gi;
   let cursor = 0;
   for (const match of text.matchAll(pattern)) {
     const flag = match[0];
@@ -985,6 +1003,13 @@ function updateScheduleControls() {
     const modes = (control.dataset.schedule || "").split(/\s+/);
     control.hidden = !modes.includes(mode);
   });
+  const isCronAgentMode = ["at", "every", "cron"].includes(mode) && els.jobModeInput.value !== "system-event";
+  document.querySelectorAll(".cron-agent-control").forEach((control) => {
+    control.hidden = !isCronAgentMode;
+  });
+  document.querySelectorAll(".subagent-control").forEach((control) => {
+    control.hidden = !isCronAgentMode || !els.useSubagentsToggle.checked;
+  });
   const presetId = currentSchedulePresetId();
   document.querySelectorAll("[data-schedule-preset]").forEach((button) => {
     button.classList.toggle("active", button.dataset.schedulePreset === presetId);
@@ -1063,6 +1088,8 @@ function collectPayload(kindOverride = null) {
     bestEffortDelivery: els.bestEffortDeliveryToggle.checked,
     expectFinal: els.expectFinalToggle.checked,
     lightContext: els.lightContextToggle.checked,
+    useSubagents: els.useSubagentsToggle.checked,
+    subagentAgents: els.subagentAgentsInput.value.trim(),
     deleteAfterRun: els.deleteAfterRunToggle.checked,
     exactTiming: els.exactTimingToggle.checked,
     replyChannel: els.replyChannelInput.value.trim(),
@@ -1152,6 +1179,12 @@ const safetyCaseLookup = {
     why: "Isolated is the safest default for repeated tasks.",
     fix: "Keep isolated unless the job must post into the main timeline.",
   },
+  subagentCron: {
+    agent: "The cron prompt includes advisory subagent guidance. When Tools is explicitly filled, the command merges agents_list, sessions_spawn, sessions_yield, and subagents into --tools.",
+    user: "The scheduled agent should ask multiple helpers for research, critique, fact-checking, brainstorming, comparison, context inspection, or draft review, then validate findings before answering.",
+    why: "Subagent review is required when sessions_spawn is available, but subagents expand perspective, not authority. If sessions_spawn is unavailable or blocked by scope, the prompt tells the parent to fall back to native read-only reviewers or explicit self-review passes instead of waiting on sessions_yield. The parent agent owns final output, file/config/scheduler/message mutations, and workflow state reports. Child tool availability still depends on OpenClaw's configured profile/defaults and tools.subagents.tools.",
+    fix: "Keep Wait for answer on, keep Cron session isolated for most jobs, restrict spawned helpers with tools.subagents.tools for safer deployments, and use subagents.allowAgents for named reviewer/researcher agents.",
+  },
   mainCron: {
     agent: "The scheduled agent work writes directly into the main target session.",
     user: "Repeated runs can add context/messages into the session users may later chat in.",
@@ -1206,6 +1239,7 @@ function safetySettingsLine(payload, meta) {
     `delivery=${deliveryLabel(payload)}`,
     `agent override=${payload.agent || "none"}`,
     `model override=${payload.model || "none"}`,
+    `subagents=${payload.useSubagents ? "enabled" : "off"}`,
     `step controller=${payload.workflow?.stepPlanEnabled ? "on" : "off"}`,
   ].join("; ");
 }
@@ -1318,6 +1352,19 @@ function buildSafetyItems(payload) {
       severity: "notice",
       title: "Cron uses an isolated run",
       text: `The scheduled job is seeded from ${contextLabel}, then runs in its own isolated agent turn. That is usually safest for repeated jobs.`,
+    });
+  }
+
+  if (isCron && payload.useSubagents) {
+    items.push({
+      caseId: "subagentCron",
+      severity: payload.jobMode === "system-event" ? "danger" : payload.expectFinal ? "notice" : "warning",
+      title: payload.jobMode === "system-event" ? "Subagents need agent mode" : "Subagents enabled",
+      text: payload.jobMode === "system-event"
+        ? "System-event jobs do not run a normal agent prompt, so Automator cannot make them subagent-ready."
+        : payload.expectFinal
+        ? "Automator will add required advisory subagent review guidance and will merge coordination tools into --tools when Tools is explicitly filled."
+        : "Subagent guidance is enabled, but Wait for answer is off. The job may finish before child work is synthesized.",
     });
   }
 
@@ -1603,6 +1650,7 @@ window.addEventListener("resize", refreshVisibleHelpPosition);
     els.deliverToggle,
     els.expectFinalToggle,
     els.lightContextToggle,
+    els.useSubagentsToggle,
     els.deleteAfterRunToggle,
     els.exactTimingToggle,
     els.bestEffortDeliveryToggle,
@@ -1616,6 +1664,7 @@ window.addEventListener("resize", refreshVisibleHelpPosition);
     els.replyToInput,
     els.webhookInput,
     els.agentInput,
+    els.subagentAgentsInput,
     els.modelInput,
     els.thinkingInput,
     els.timeoutInput,

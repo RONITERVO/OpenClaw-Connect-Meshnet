@@ -130,6 +130,56 @@ try {
   assert.ok(createWarnCalls.some((args) => args[0] === "cron" && args[1] === "edit" && args[2] === "job-created-with-warning" && args.includes("--enable")));
   process.env.FAKE_CRON_ADD_WARN_EXIT = "0";
 
+  process.env.FAKE_JOB_ID = "job-nested-subagents";
+  await resetOpenClawLog();
+
+  const createNestedSubagentsResult = await createCronWorkflow({
+    enabled: false,
+    disabled: true,
+    name: "Nested Subagents",
+    baseMessage: "Run safely with configured helper agents.",
+    sessionKey: "agent:main:dashboard:test",
+    scheduleMode: "every",
+    every: "30m",
+    deliveryMode: "quiet",
+    tools: "exec,read",
+    workflow: {
+      name: "Nested Subagents",
+      useSubagents: true,
+      subagentAgents: "researcher,coder",
+      steps: [
+        {
+          name: "First row",
+          action: "Do the first row with helper research.",
+          done: "The first row is done.",
+        },
+      ],
+    },
+  }, settings);
+
+  assert.equal(createNestedSubagentsResult.ok, true);
+  assert.equal(createNestedSubagentsResult.workflow.useSubagents, true);
+  assert.deepEqual(createNestedSubagentsResult.workflow.subagentAgents, ["researcher", "coder"]);
+  const nestedSubagentCalls = await readOpenClawCalls();
+  const nestedSubagentAdd = nestedSubagentCalls.find((args) => args[0] === "cron" && args[1] === "add");
+  assert.equal(
+    nestedSubagentAdd[nestedSubagentAdd.indexOf("--tools") + 1],
+    "exec,read,agents_list,sessions_spawn,sessions_yield,subagents",
+  );
+  const nestedSubagentMessage = nestedSubagentAdd[nestedSubagentAdd.indexOf("--message") + 1];
+  assert.match(nestedSubagentMessage, /Advisory subagents:/);
+  assert.match(nestedSubagentMessage, /Subagent coordination requested:/);
+  assert.match(nestedSubagentMessage, /Fix every valid critique that affects correctness, safety, user intent, continuity, or quality/);
+  assert.match(nestedSubagentMessage, /COMPLETE also requires that no valid blocking subagent critique remains unresolved/);
+  assert.match(nestedSubagentMessage, /Advisory subagent review is required/);
+  assert.match(nestedSubagentMessage, /Spawn at least three distinct advisory reviewers when practical/);
+  assert.match(nestedSubagentMessage, /missing scope: operator\.write/);
+  assert.match(nestedSubagentMessage, /native read-only advisory reviewers/);
+  assert.match(nestedSubagentMessage, /Do not call sessions_yield after failed or unavailable spawns/);
+  assert.match(nestedSubagentMessage, /correctness\/safety, completeness\/user-intent, and quality\/edge-case/);
+  assert.match(nestedSubagentMessage, /tools\.subagents\.tools/);
+  assert.match(nestedSubagentMessage, /researcher, coder/);
+
   process.env.FAKE_FAIL_MESSAGE = "1";
   process.env.FAKE_JOB_ID = "job-create-hardening";
   await resetOpenClawLog();

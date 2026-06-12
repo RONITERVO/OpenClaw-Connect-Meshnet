@@ -144,6 +144,48 @@ try {
     timeoutSeconds: 0,
   }, commandSettings);
   assert.equal(cronCommand[cronCommand.indexOf("--timeout-seconds") + 1], "600");
+  const subagentCronCommand = cronArgs({
+    name: "subagent test",
+    sessionKey: "agent:main:test",
+    message: "parallel research",
+    scheduleMode: "every",
+    every: "1h",
+    deliveryMode: "notify",
+    replyChannel: "telegram",
+    replyTo: "123",
+    tools: "exec,read,sessions_spawn",
+    useSubagents: true,
+    subagentAgents: "researcher,coder",
+  }, commandSettings);
+  assert.equal(
+    subagentCronCommand[subagentCronCommand.indexOf("--tools") + 1],
+    "exec,read,sessions_spawn,agents_list,sessions_yield,subagents",
+  );
+  const subagentCronMessage = subagentCronCommand[subagentCronCommand.indexOf("--message") + 1];
+  assert.match(subagentCronMessage, /Subagent coordination requested:/);
+  assert.match(subagentCronMessage, /Advisory subagent review is required/);
+  assert.match(subagentCronMessage, /Spawn at least three distinct advisory reviewers when practical/);
+  assert.match(subagentCronMessage, /correctness\/safety, completeness\/user-intent, and quality\/edge-case/);
+  assert.match(subagentCronMessage, /Subagents must not edit files, mutate workflow state, change configs, touch schedulers, send messages, commit code, or affect external systems/);
+  assert.match(subagentCronMessage, /missing scope: operator\.write/);
+  assert.match(subagentCronMessage, /native read-only advisory reviewers/);
+  assert.match(subagentCronMessage, /Do not call sessions_yield after failed or unavailable spawns/);
+  assert.match(subagentCronMessage, /fix every valid critique that affects correctness, safety, user intent, continuity, completeness, or quality before reporting PROGRESS or COMPLETE/);
+  assert.match(subagentCronMessage, /tools\.subagents\.tools/);
+  assert.match(subagentCronMessage, /researcher, coder/);
+  const defaultToolsSubagentCronCommand = cronArgs({
+    name: "subagent default tools",
+    sessionKey: "agent:main:test",
+    message: "parallel research",
+    scheduleMode: "every",
+    every: "1h",
+    deliveryMode: "quiet",
+    useSubagents: true,
+  }, commandSettings);
+  assert.equal(defaultToolsSubagentCronCommand.includes("--tools"), false);
+  assert.match(defaultToolsSubagentCronCommand[defaultToolsSubagentCronCommand.indexOf("--message") + 1], /Subagent coordination requested:/);
+  assert.match(defaultToolsSubagentCronCommand[defaultToolsSubagentCronCommand.indexOf("--message") + 1], /tools\.alsoAllow/);
+  assert.match(defaultToolsSubagentCronCommand[defaultToolsSubagentCronCommand.indexOf("--message") + 1], /tools\.subagents\.tools/);
   const eventCommand = eventArgs({ sessionKey: "agent:main:test", text: "hello", timeoutMs: "bad" });
   assert.equal(eventCommand[eventCommand.indexOf("--timeout") + 1], "30000");
   const tinyAgentTimeout = agentArgs({ sessionKey: "agent:main:test", message: "hello", timeoutSeconds: 0.1 }, commandSettings);

@@ -28,7 +28,7 @@ What it does:
 - optionally delivers the agent response back to Telegram
 - creates scheduled jobs with `openclaw cron add` using cron-style schedule and delivery presets
 - avoids manual session-id entry in the normal flow; selected chat cards fill routing automatically
-- supports advanced settings for job name/description, enabled state, session key, reply target, agent/model override, thinking level, timeout, tools, webhook delivery, stagger/exact cron timing, wake mode, and system-event flows
+- supports advanced settings for job name/description, enabled state, session key, reply target, agent/model override, thinking level, timeout, subagent coordination, tools, webhook delivery, stagger/exact cron timing, wake mode, and system-event flows
 - shows an always-visible safety check when context, cron session, and reply destination do not line up
 - can use a spreadsheet-style step-plan controller that advances one repeating cron only after the agent reports the active step complete
 - keeps previous/future workflow rows out of cron prompts while exposing a focused read-only past-events log for the agent and user
