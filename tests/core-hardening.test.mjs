@@ -163,9 +163,11 @@ try {
   );
   const subagentCronMessage = subagentCronCommand[subagentCronCommand.indexOf("--message") + 1];
   assert.match(subagentCronMessage, /Subagent coordination requested:/);
-  assert.match(subagentCronMessage, /Subagents expand perspective, not authority/);
-  assert.match(subagentCronMessage, /must not mutate files, configs, schedulers, repositories, workflow state, messages, or external systems/);
-  assert.match(subagentCronMessage, /fix valid issues yourself, and only then report PROGRESS or COMPLETE/);
+  assert.match(subagentCronMessage, /Advisory subagent review is required/);
+  assert.match(subagentCronMessage, /Spawn at least three distinct advisory reviewers when practical/);
+  assert.match(subagentCronMessage, /correctness\/safety, completeness\/user-intent, and quality\/edge-case/);
+  assert.match(subagentCronMessage, /Subagents must not edit files, mutate workflow state, change configs, touch schedulers, send messages, commit code, or affect external systems/);
+  assert.match(subagentCronMessage, /fix every valid critique that affects correctness, safety, user intent, continuity, completeness, or quality before reporting PROGRESS or COMPLETE/);
   assert.match(subagentCronMessage, /tools\.subagents\.tools/);
   assert.match(subagentCronMessage, /researcher, coder/);
   const defaultToolsSubagentCronCommand = cronArgs({

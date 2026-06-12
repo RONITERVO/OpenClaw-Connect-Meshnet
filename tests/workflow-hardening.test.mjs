@@ -171,7 +171,9 @@ try {
   assert.match(nestedSubagentMessage, /Subagent coordination requested:/);
   assert.match(nestedSubagentMessage, /Fix every valid critique that affects correctness, safety, user intent, continuity, or quality/);
   assert.match(nestedSubagentMessage, /COMPLETE also requires that no valid blocking subagent critique remains unresolved/);
-  assert.match(nestedSubagentMessage, /Subagents expand perspective, not authority/);
+  assert.match(nestedSubagentMessage, /Advisory subagent review is required/);
+  assert.match(nestedSubagentMessage, /Spawn at least three distinct advisory reviewers when practical/);
+  assert.match(nestedSubagentMessage, /correctness\/safety, completeness\/user-intent, and quality\/edge-case/);
   assert.match(nestedSubagentMessage, /tools\.subagents\.tools/);
   assert.match(nestedSubagentMessage, /researcher, coder/);
 

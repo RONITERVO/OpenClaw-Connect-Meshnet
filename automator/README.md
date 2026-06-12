@@ -54,7 +54,9 @@ openclaw cron add `
 
 Advanced cron controls mirror the useful Gateway `/cron` fields: `--disabled`, `--description`, `--agent`, `--model`, `--webhook`, `--best-effort-deliver`, `--stagger`, `--exact`, `--delete-after-run`, and `--keep-after-run`.
 
-For a subagent-ready scheduled agent job, turn on **Enable subagents** in Advanced settings. Automator keeps the job as an agent-turn cron and appends prompt guidance so the scheduled agent can spawn advisory helper work and synthesize the result. Subagents are side-effect-free advisors: they may research, critique, fact-check, brainstorm, compare, inspect context, or review draft output. The parent agent validates their findings, fixes valid critique, owns all file/config/scheduler/message mutations, and reports COMPLETE or PROGRESS only after that review.
+For a subagent-ready scheduled agent job, turn on **Enable subagents** in Advanced settings. Automator keeps the job as an agent-turn cron and appends prompt guidance so the scheduled agent treats advisory review as required when `sessions_spawn` is available. The prompt tells the parent agent to spawn at least three distinct advisory reviewers when practical: correctness/safety, completeness/user-intent, and quality/edge-case. Creative and non-coding jobs adapt those roles to continuity, style, audience, structure, factuality, rhythm, originality, or similar review lanes.
+
+Subagents are side-effect-free advisors: they may research, critique, fact-check, brainstorm, compare, inspect context, or review draft output. They must not edit files, mutate workflow state, change configs, touch schedulers, send messages, commit code, or affect external systems. The parent agent validates their findings, fixes valid critique, owns all file/config/scheduler/message mutations, and reports COMPLETE or PROGRESS only after that review.
 
 Leave **Tools** blank to keep OpenClaw's configured tool profile/defaults. If you fill **Tools**, Automator treats it as an explicit allow-list and merges in the subagent coordination tools:
 
