@@ -127,6 +127,8 @@ if (-not $meshIp) {
 }
 & openclaw config set agents.defaults.thinkingDefault xhigh *> $null
 & openclaw config set gateway.remote.url "ws://$($meshIp):18789" *> $null
+& openclaw config set messages.visibleReplies automatic *> $null
+& openclaw config set messages.groupChat.visibleReplies message_tool *> $null
 $loopbackProxyJob = Start-Job -Name "OpenClawLoopbackProxyStarter" -ArgumentList $meshIp, $portProxyOwnerPath, $runId, $loopbackProxyPidPath, $loopbackProxyScriptPath, $nodeCommand.Source -ScriptBlock {
     param([string] $MeshIp, [string] $OwnerPath, [string] $RunId, [string] $PidPath, [string] $ProxyScriptPath, [string] $NodePath)
     Start-Sleep -Seconds 6
