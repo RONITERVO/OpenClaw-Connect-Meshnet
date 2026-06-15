@@ -124,7 +124,7 @@ try {
     await close(server);
   }
 
-  const { agentArgs, cronArgs, cronTimeoutSeconds, eventArgs, minCronExpressionIntervalSeconds, parseDurationSeconds } = await import("../automator/lib/commands.mjs");
+  const { agentArgs, autoContinueTimeoutSeconds, cronArgs, cronTimeoutSeconds, eventArgs, minCronExpressionIntervalSeconds, parseDurationSeconds } = await import("../automator/lib/commands.mjs");
   const commandSettings = {
     defaultThinking: "xhigh",
     defaultTimeoutSeconds: 600,
@@ -146,6 +146,9 @@ try {
   assert.equal(cronCommand[cronCommand.indexOf("--timeout-seconds") + 1], "3600");
   assert.equal(parseDurationSeconds("1h30m"), 5400);
   assert.equal(cronTimeoutSeconds({ scheduleMode: "every", every: "30m", timeoutSeconds: 1 }, commandSettings), 1800);
+  assert.equal(cronTimeoutSeconds({ scheduleMode: "every", every: "30m", workflow: { stepPlanEnabled: true } }, commandSettings), autoContinueTimeoutSeconds);
+  assert.equal(cronTimeoutSeconds({ scheduleMode: "every", every: "30m", workflow: { stepPlanEnabled: true, autoContinue: false } }, commandSettings), 1800);
+  assert.equal(autoContinueTimeoutSeconds, 2073600);
   assert.equal(minCronExpressionIntervalSeconds("*/15 * * * *"), 900);
   assert.equal(minCronExpressionIntervalSeconds("0 0 29 2 *"), 126230400);
   assert.equal(minCronExpressionIntervalSeconds("* * 31 2 *"), null);

@@ -278,7 +278,7 @@ const helpCatalog = {
   workflowAutoContinue: {
     title: "Continue immediately",
     simple: "Start the next workflow run right after progress or a finished step.",
-    detailed: "When enabled, a successful PROGRESS report or non-final COMPLETE report refreshes the cron prompt and then calls openclaw cron run <job id>. This avoids waiting for the next timed schedule or manual Run click. The controller does not auto-run after BLOCKED, FAILED, final completion, or prompt rewrite failure.",
+    detailed: "Enabled by default. A successful PROGRESS report or non-final COMPLETE report refreshes the cron prompt and then calls openclaw cron run <job id>. Turn this off only when the schedule interval should pace the workflow. The controller does not auto-run after BLOCKED, FAILED, final completion, or prompt rewrite failure.",
   },
   workflowName: {
     title: "Workflow",
@@ -1221,7 +1221,7 @@ const safetyCaseLookup = {
   stepControllerAutoContinue: {
     agent: "After a successful PROGRESS or non-final COMPLETE report, Automator refreshes the cron prompt and requests openclaw cron run for the same job.",
     user: "The next turn starts right away after the agent reports progress or finishes a step.",
-    why: "This removes the need to watch the workflow and manually click Run between steps, but it can keep spending tokens until the workflow completes, blocks, or fails.",
+    why: "This opt-out default removes the need to watch the workflow and manually click Run between steps, but it can keep spending tokens until the workflow completes, blocks, or fails.",
     fix: "Leave Continue immediately off when you want the schedule interval to pace the work.",
   },
   ok: {

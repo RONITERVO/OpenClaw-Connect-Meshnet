@@ -828,7 +828,7 @@ async function createCronWorkflow(body, settings) {
     intakeHint: optionalText(workflowBody.intakeHint || body.intakeHint || body.hint, 3000),
     useSubagents: body.useSubagents === true || workflowBody.useSubagents === true,
     subagentAgents: normalizeSubagentAgentList(body.subagentAgents || workflowBody.subagentAgents),
-    autoContinue: workflowBody.autoContinue === true || body.autoContinue === true,
+    autoContinue: workflowBody.autoContinue !== false && body.autoContinue !== false,
     autoContinueDelayMs: normalizeAutoContinueDelayMs(workflowBody.autoContinueDelayMs ?? body.autoContinueDelayMs),
     tokenBudget: workflowTokenBudgetFromBody(body),
     tokensUsed: workflowTokensUsedFromBody(body),
@@ -865,6 +865,11 @@ async function createCronWorkflow(body, settings) {
     disabled: true,
     useSubagents: workflow.useSubagents,
     subagentAgents: workflow.subagentAgents,
+    autoContinue: workflow.autoContinue,
+    workflow: {
+      ...workflowBody,
+      autoContinue: workflow.autoContinue,
+    },
     message: workflowStepMessage(workflow),
   };
   const addArgs = cronArgs(firstBody, settings);

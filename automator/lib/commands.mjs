@@ -2,6 +2,7 @@ import { cronNotifySupport } from "./channels.mjs";
 import { optionalText, requireText } from "./utils.mjs";
 
 const subagentCoordinationTools = ["agents_list", "sessions_spawn", "sessions_yield", "subagents"];
+const autoContinueTimeoutSeconds = 24 * 24 * 60 * 60;
 const monthNames = {
   jan: 1,
   feb: 2,
@@ -206,10 +207,18 @@ function minCronExpressionIntervalSeconds(expr) {
 
 function cronTimeoutSeconds(body, settings) {
   const fallback = normalizePositiveInteger(settings.defaultTimeoutSeconds, 600) || 600;
+  if (workflowAutoContinueEnabled(body)) return autoContinueTimeoutSeconds;
   const mode = String(body.scheduleMode || "every");
   if (mode === "every") return parseDurationSeconds(body.every || "1h") || fallback;
   if (mode === "cron") return minCronExpressionIntervalSeconds(body.cron) || fallback;
   return fallback;
+}
+
+function workflowAutoContinueEnabled(body = {}) {
+  const workflow = body.workflow || {};
+  if (body.autoContinue === false || workflow.autoContinue === false) return false;
+  if (body.autoContinue === true || workflow.autoContinue === true) return true;
+  return workflow.stepPlanEnabled === true;
 }
 
 function normalizeToolList(value) {
@@ -383,6 +392,7 @@ function eventArgs(body) {
 export {
   agentArgs,
   applyCronMessageGuidance,
+  autoContinueTimeoutSeconds,
   cronTimeoutSeconds,
   cronArgs,
   eventArgs,

@@ -532,7 +532,7 @@ function buildWorkflowIntake(body, settings) {
   const webhook = optionalText(body.webhook || delivery.webhook, 1000);
   const steps = parseWorkflowSteps(body.steps || workflowBody.steps || plan.steps);
   const tokenBudget = optionalTokenBudget(body.tokenBudget ?? budget.tokenBudget ?? workflowBody.tokenBudget);
-  const autoContinue = body.autoContinue === true || workflowBody.autoContinue === true || plan.autoContinue === true;
+  const autoContinue = body.autoContinue !== false && workflowBody.autoContinue !== false && plan.autoContinue !== false;
   const useSubagents = body.useSubagents === true || workflowBody.useSubagents === true || plan.useSubagents === true;
   const subagentAgents = normalizeSubagentAgentList(body.subagentAgents || workflowBody.subagentAgents || plan.subagentAgents);
   const explicitQuestions = normalizeQuestionList(body.questions);
@@ -706,7 +706,7 @@ function workflowIntakeSchema() {
       "The cron prompt receives only the active step plus a read-only past-event-log link.",
       "The cron prompt uses goal-style steering: user-provided row data is not higher-priority instruction text, current evidence is authoritative, and COMPLETE requires a scoped completion audit.",
       "Progress reports hold the active row and keep the cron scheduled.",
-      "If autoContinue is true, a successful progress or non-final complete report also requests openclaw cron run for the same job after the prompt is refreshed.",
+      "autoContinue defaults to true. When it is true, a successful progress or non-final complete report also requests openclaw cron run for the same job after the prompt is refreshed.",
       "Blocked or failed step reports hold the active row and pause the cron until the blocker is resolved.",
       "Subagent-ready workflows require advisory review when sessions_spawn is available: parent agents spawn multiple side-effect-free reviewers when practical, fall back immediately to native read-only reviewers or explicit self-review passes if sessions_spawn fails, decide, fix valid critique, own side effects, and report state before progress or completion.",
       "Subagent-ready workflows merge coordination tools into explicit --tools allow-lists. With no explicit tools allow-list, OpenClaw's configured profile/defaults decide tool availability. For safer deployments, restrict spawned helper agents with tools.subagents.tools; named target agents and nested subagents still require OpenClaw config allowAgents/maxSpawnDepth.",
@@ -717,7 +717,7 @@ function workflowIntakeSchema() {
       name: "Workflow/job name.",
       baseMessage: "Overall goal shown before the active step.",
       tokenBudget: "Optional positive integer token budget shown in the generated active-row prompt. Omit for none/unbounded.",
-      autoContinue: "Optional boolean. When true, successful PROGRESS and non-final COMPLETE reports request the next cron run immediately after the prompt refresh.",
+      autoContinue: "Optional boolean. Defaults true. Set false to opt out. When true, successful PROGRESS and non-final COMPLETE reports request the next cron run immediately after the prompt refresh.",
       useSubagents: "Optional boolean. When true, Automator makes the cron agent-turn subagent-ready by adding required advisory-review guidance to the prompt and merging agents_list, sessions_spawn, sessions_yield, and subagents into an explicit --tools allow-list when one is supplied. Subagents advise only; if sessions_spawn fails the parent immediately falls back to native read-only reviewers or explicit self-review passes. The parent validates critique, performs any side effects, and reports workflow state.",
       subagentAgents: "Optional array or comma-separated configured agent ids to mention as preferred subagent targets. These still require OpenClaw subagents.allowAgents config.",
       scheduleMode: "every or cron",
@@ -768,7 +768,7 @@ function workflowIntakeDocs() {
     "- Use subagentAgents only for configured target agent ids; if the target is not allowed, tell the user to update OpenClaw subagents.allowAgents. Avoid nested subagents for normal workflows; nested advisory delegation needs maxSpawnDepth >= 2.",
     "- Treat each generated active-row prompt like a bounded /goal run: preserve the row scope, work from current evidence, avoid unrelated expansion, and report COMPLETE only when the Done when condition and explicit deliverables are proven.",
     "- If a step reports progress, the controller holds the same active row and keeps the cron scheduled for the next run.",
-    "- If autoContinue is true, progress and non-final complete reports also request an immediate cron run after the prompt refresh succeeds.",
+    "- autoContinue defaults to true. Unless set false, progress and non-final complete reports also request an immediate cron run after the prompt refresh succeeds.",
     "- If a step is blocked or fails, the controller holds the same active row and pauses the cron to avoid repeated wasted runs. Re-enable or run the job after resolving the blocker.",
     "- Use isolated cron sessions unless the user explicitly wants the main chat timeline to grow.",
     "- If the source is dashboard/webchat and no configured messaging destination is chosen, use quiet delivery. OpenClaw cron cannot announce directly to dashboard webchat sessions.",

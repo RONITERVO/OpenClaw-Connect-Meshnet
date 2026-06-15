@@ -49,7 +49,23 @@ function create(body) {
   assert.equal(createIntake.mode, "ready");
   assert.equal(previewIntake.draft.enabled, false);
   assert.equal(createIntake.draft.enabled, false);
+  assert.equal(previewIntake.draft.workflow.autoContinue, true);
+  assert.match(previewIntake.addCommandPreview, /--timeout-seconds 2073600/);
   assert.equal(workflowIntakeDraftHash(previewIntake.draft), workflowIntakeDraftHash(createIntake.draft));
+}
+
+{
+  const previewIntake = preview({
+    ...baseRequest,
+    autoContinue: false,
+  });
+  const template = workflowIntakeCreateRequestTemplate(previewIntake.draft, {
+    id: "approval-id",
+    code: "WF-NOAUTO",
+  });
+  assert.equal(previewIntake.draft.workflow.autoContinue, false);
+  assert.equal(template.autoContinue, false);
+  assert.match(previewIntake.addCommandPreview, /--timeout-seconds 1800/);
 }
 
 {
@@ -239,7 +255,7 @@ No --agent specified; the job will run with the configured default agent.`;
   assert.equal(template.model, "openai/gpt-5.5");
   assert.equal(template.thinking, "high");
   assert.equal(template.timeoutSeconds, 900);
-  assert.match(previewIntake.addCommandPreview, /--timeout-seconds 1800/);
+  assert.match(previewIntake.addCommandPreview, /--timeout-seconds 2073600/);
   assert.doesNotMatch(previewIntake.addCommandPreview, /--timeout-seconds 900/);
   assert.equal(template.autoContinue, true);
   assert.equal(template.useSubagents, true);
