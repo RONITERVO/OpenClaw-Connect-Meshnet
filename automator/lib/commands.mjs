@@ -87,7 +87,7 @@ function parseDurationSeconds(value) {
 }
 
 function cronFieldTokenValue(token, names = null, { dayOfWeek = false } = {}) {
-  const clean = String(token || "").trim().toLowerCase().replace(/^\+/, "");
+  const clean = String(token || "").trim().toLowerCase();
   const named = names?.[clean];
   if (named != null) return named;
   if (!/^\d+$/.test(clean)) return null;
@@ -148,6 +148,7 @@ function cronDayMatches(date, fields) {
   if (fields.dom.wildcard && fields.dow.wildcard) return true;
   if (fields.dom.wildcard) return dowMatches;
   if (fields.dow.wildcard) return domMatches;
+  if (fields.dow.andWithDom) return domMatches && dowMatches;
   return domMatches || dowMatches;
 }
 
@@ -157,14 +158,18 @@ function parseCronExpression(expr) {
   const [secondText, minuteText, hourText, domText, monthText, dowText] = parts.length === 6
     ? parts
     : ["0", ...parts];
+  const dowAndDom = dowText.startsWith("+");
+  const normalizedDowText = dowAndDom ? dowText.slice(1) : dowText;
+  if (dowAndDom && !normalizedDowText) return null;
   const fields = {
     second: parseCronField(secondText, 0, 59),
     minute: parseCronField(minuteText, 0, 59),
     hour: parseCronField(hourText, 0, 23),
     dom: parseCronField(domText, 1, 31),
     month: parseCronField(monthText, 1, 12, { names: monthNames }),
-    dow: parseCronField(dowText, 0, 6, { names: dayNames, dayOfWeek: true }),
+    dow: parseCronField(normalizedDowText, 0, 6, { names: dayNames, dayOfWeek: true }),
   };
+  if (fields.dow) fields.dow.andWithDom = dowAndDom;
   return Object.values(fields).every(Boolean) ? fields : null;
 }
 

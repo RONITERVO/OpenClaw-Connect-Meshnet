@@ -153,6 +153,10 @@ try {
   assert.equal(minCronExpressionIntervalSeconds("0 0 29 2 *"), 126230400);
   assert.equal(minCronExpressionIntervalSeconds("* * 31 2 *"), null);
   assert.equal(cronTimeoutSeconds({ scheduleMode: "cron", cron: "0 9 * * 1-5", timeoutSeconds: 1 }, commandSettings), 86400);
+  assert.equal(minCronExpressionIntervalSeconds("0 9 15 * 1"), 86400);
+  assert.equal(minCronExpressionIntervalSeconds("0 9 15 * +1"), 2419200);
+  assert.equal(minCronExpressionIntervalSeconds("0 9 15 * +MON"), 2419200);
+  assert.equal(cronTimeoutSeconds({ scheduleMode: "cron", cron: "0 9 15 * +1", timeoutSeconds: 1 }, commandSettings), 2419200);
   const subagentCronCommand = cronArgs({
     name: "subagent test",
     sessionKey: "agent:main:test",
