@@ -239,6 +239,8 @@ No --agent specified; the job will run with the configured default agent.`;
   assert.equal(template.model, "openai/gpt-5.5");
   assert.equal(template.thinking, "high");
   assert.equal(template.timeoutSeconds, 900);
+  assert.match(previewIntake.addCommandPreview, /--timeout-seconds 1800/);
+  assert.doesNotMatch(previewIntake.addCommandPreview, /--timeout-seconds 900/);
   assert.equal(template.autoContinue, true);
   assert.equal(template.useSubagents, true);
   assert.deepEqual(template.subagentAgents, ["researcher"]);

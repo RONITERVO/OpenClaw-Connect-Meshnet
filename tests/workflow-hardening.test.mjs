@@ -93,6 +93,9 @@ try {
   assert.equal(createLargeResult.ok, true);
   assert.equal(createLargeResult.workflow.jobId, "job-large-create-json");
   assert.equal(createLargeResult.workflow.status, "active");
+  const createLargeCalls = await readOpenClawCalls();
+  const createLargeAdd = createLargeCalls.find((args) => args[0] === "cron" && args[1] === "add");
+  assert.equal(createLargeAdd[createLargeAdd.indexOf("--timeout-seconds") + 1], "1800");
   process.env.FAKE_CRON_ADD_LARGE_JSON = "0";
 
   process.env.FAKE_CRON_ADD_WARN_EXIT = "1";

@@ -158,7 +158,7 @@ const helpCatalog = {
   modeAdvanced: {
     title: "Fine tune",
     simple: "Show the extra controls.",
-    detailed: "Opens the full command surface: schedule fields, job name, enabled state, session key override, reply routing, cron session target, agent/model override, timeout, tool allow-list, wake mode, delivery mode, stagger, and system-event mode. It also switches help labels to Detailed.",
+    detailed: "Opens the full command surface: schedule fields, job name, enabled state, session key override, reply routing, cron session target, agent/model override, immediate-run timeout, tool allow-list, wake mode, delivery mode, stagger, and system-event mode. It also switches help labels to Detailed.",
   },
   sessionSearch: {
     title: "Find chat",
@@ -333,7 +333,7 @@ const helpCatalog = {
   advancedSummary: {
     title: "Advanced settings",
     simple: "Extra controls live here.",
-    detailed: "These fields map directly to OpenClaw CLI flags. They are for users who want to verify routing, delivery, model, timeout, tool access, wake behavior, and saved-job behavior before execution.",
+    detailed: "These fields map to OpenClaw CLI settings where direct control is safe. Cron job timeouts are derived from the schedule cadence by the backend instead of being user-entered.",
   },
   advancedSchedule: {
     title: "Advanced schedule",
@@ -397,8 +397,8 @@ const helpCatalog = {
   },
   timeout: {
     title: "Timeout",
-    simple: "How long the app waits before giving up.",
-    detailed: "Immediate runs pass --timeout seconds. Cron jobs pass --timeout-seconds. This limits how long the OpenClaw command may run before the app treats it as failed.",
+    simple: "How long an immediate run can work.",
+    detailed: "Immediate runs pass --timeout seconds from this field. Scheduled agent jobs ignore this input: Automator derives --timeout-seconds from the cron cadence so a job cannot be created with an accidentally tiny run budget.",
   },
   tools: {
     title: "Tools",
@@ -1007,6 +1007,9 @@ function updateScheduleControls() {
   document.querySelectorAll(".cron-agent-control").forEach((control) => {
     control.hidden = !isCronAgentMode;
   });
+  document.querySelectorAll(".agent-timeout-control").forEach((control) => {
+    control.hidden = mode !== "now";
+  });
   document.querySelectorAll(".subagent-control").forEach((control) => {
     control.hidden = !isCronAgentMode || !els.useSubagentsToggle.checked;
   });
@@ -1099,7 +1102,7 @@ function collectPayload(kindOverride = null) {
     agent: els.agentInput.value.trim(),
     model: els.modelInput.value.trim(),
     thinking: els.thinkingInput.value,
-    timeoutSeconds: Number(els.timeoutInput.value || 600),
+    timeoutSeconds: scheduleMode === "now" ? Number(els.timeoutInput.value || 600) : undefined,
     scheduleMode,
     at: els.atInput.value.trim(),
     every: els.everyInput.value.trim(),

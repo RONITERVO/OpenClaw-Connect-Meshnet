@@ -2,6 +2,55 @@ import { cronNotifySupport } from "./channels.mjs";
 import { optionalText, requireText } from "./utils.mjs";
 
 const subagentCoordinationTools = ["agents_list", "sessions_spawn", "sessions_yield", "subagents"];
+const monthNames = {
+  jan: 1,
+  feb: 2,
+  mar: 3,
+  apr: 4,
+  may: 5,
+  jun: 6,
+  jul: 7,
+  aug: 8,
+  sep: 9,
+  oct: 10,
+  nov: 11,
+  dec: 12,
+};
+const dayNames = {
+  sun: 0,
+  mon: 1,
+  tue: 2,
+  wed: 3,
+  thu: 4,
+  fri: 5,
+  sat: 6,
+};
+const durationUnitsSeconds = {
+  ms: 0.001,
+  millisecond: 0.001,
+  milliseconds: 0.001,
+  s: 1,
+  sec: 1,
+  secs: 1,
+  second: 1,
+  seconds: 1,
+  m: 60,
+  min: 60,
+  mins: 60,
+  minute: 60,
+  minutes: 60,
+  h: 60 * 60,
+  hr: 60 * 60,
+  hrs: 60 * 60,
+  hour: 60 * 60,
+  hours: 60 * 60,
+  d: 24 * 60 * 60,
+  day: 24 * 60 * 60,
+  days: 24 * 60 * 60,
+  w: 7 * 24 * 60 * 60,
+  week: 7 * 24 * 60 * 60,
+  weeks: 7 * 24 * 60 * 60,
+};
 
 function normalizeThinking(value, fallback = "xhigh") {
   const allowed = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
@@ -15,6 +64,152 @@ function normalizePositiveInteger(value, fallback = null) {
   if (Number.isFinite(parsed) && parsed > 0) return Math.max(1, Math.round(parsed));
   const fallbackParsed = Number(fallback);
   return Number.isFinite(fallbackParsed) && fallbackParsed > 0 ? Math.max(1, Math.round(fallbackParsed)) : null;
+}
+
+function parseDurationSeconds(value) {
+  const text = optionalText(value, 80).toLowerCase();
+  if (!text) return null;
+  if (/^\d+(?:\.\d+)?$/.test(text)) return Math.max(1, Math.round(Number(text)));
+  const tokenPattern = /(\d+(?:\.\d+)?)\s*([a-z]+)/g;
+  let total = 0;
+  let consumed = "";
+  for (const match of text.matchAll(tokenPattern)) {
+    const unitSeconds = durationUnitsSeconds[match[2]];
+    const amount = Number(match[1]);
+    if (!unitSeconds || !Number.isFinite(amount) || amount <= 0) return null;
+    total += amount * unitSeconds;
+    consumed += match[0];
+  }
+  const stripped = text.replace(/[\s,_-]+/g, "");
+  if (!total || consumed.replace(/[\s,_-]+/g, "") !== stripped) return null;
+  return Math.max(1, Math.round(total));
+}
+
+function cronFieldTokenValue(token, names = null, { dayOfWeek = false } = {}) {
+  const clean = String(token || "").trim().toLowerCase().replace(/^\+/, "");
+  const named = names?.[clean];
+  if (named != null) return named;
+  if (!/^\d+$/.test(clean)) return null;
+  const parsed = Number(clean);
+  if (!Number.isSafeInteger(parsed)) return null;
+  if (dayOfWeek && parsed === 7) return 0;
+  return parsed;
+}
+
+function parseCronField(field, min, max, options = {}) {
+  const text = optionalText(field, 80).toLowerCase();
+  const wildcard = text === "*" || text === "?";
+  const values = new Set();
+  if (!text) return null;
+  for (const rawPart of text.split(",")) {
+    const part = rawPart.trim();
+    if (!part) return null;
+    const pieces = part.split("/");
+    if (pieces.length > 2) return null;
+    const rangeText = pieces[0] || "*";
+    const step = pieces[1] == null ? 1 : Number(pieces[1]);
+    if (!Number.isSafeInteger(step) || step <= 0) return null;
+    let start = min;
+    let end = max;
+    if (rangeText !== "*" && rangeText !== "?") {
+      if (/[lw#]/i.test(rangeText)) return null;
+      const rangeParts = rangeText.split("-");
+      if (rangeParts.length > 2) return null;
+      start = cronFieldTokenValue(rangeParts[0], options.names, { dayOfWeek: options.dayOfWeek });
+      end = rangeParts.length === 2 ? cronFieldTokenValue(rangeParts[1], options.names, { dayOfWeek: options.dayOfWeek }) : start;
+      if (options.dayOfWeek && rangeParts.length === 2 && String(rangeParts[0]).trim() === "0" && String(rangeParts[1]).trim() === "7") end = 6;
+      if (start == null || end == null) return null;
+    }
+    if (start < min || start > max || end < min || end > max) return null;
+    if (start <= end) {
+      for (let value = start; value <= end; value += step) values.add(value);
+    } else if (options.dayOfWeek) {
+      for (let value = start; value <= max; value += step) values.add(value);
+      for (let value = min; value <= end; value += step) values.add(value);
+    } else {
+      return null;
+    }
+  }
+  if (!values.size) return null;
+  return {
+    values: [...values].sort((a, b) => a - b),
+    wildcard,
+  };
+}
+
+function cronDayMatches(date, fields) {
+  const month = date.getUTCMonth() + 1;
+  if (!fields.month.values.includes(month)) return false;
+  const dom = date.getUTCDate();
+  const dow = date.getUTCDay();
+  const domMatches = fields.dom.values.includes(dom);
+  const dowMatches = fields.dow.values.includes(dow);
+  if (fields.dom.wildcard && fields.dow.wildcard) return true;
+  if (fields.dom.wildcard) return dowMatches;
+  if (fields.dow.wildcard) return domMatches;
+  return domMatches || dowMatches;
+}
+
+function parseCronExpression(expr) {
+  const parts = optionalText(expr, 120).split(/\s+/).filter(Boolean);
+  if (parts.length !== 5 && parts.length !== 6) return null;
+  const [secondText, minuteText, hourText, domText, monthText, dowText] = parts.length === 6
+    ? parts
+    : ["0", ...parts];
+  const fields = {
+    second: parseCronField(secondText, 0, 59),
+    minute: parseCronField(minuteText, 0, 59),
+    hour: parseCronField(hourText, 0, 23),
+    dom: parseCronField(domText, 1, 31),
+    month: parseCronField(monthText, 1, 12, { names: monthNames }),
+    dow: parseCronField(dowText, 0, 6, { names: dayNames, dayOfWeek: true }),
+  };
+  return Object.values(fields).every(Boolean) ? fields : null;
+}
+
+function minCronExpressionIntervalSeconds(expr) {
+  const fields = parseCronExpression(expr);
+  if (!fields) return null;
+  const times = [];
+  for (const hour of fields.hour.values) {
+    for (const minute of fields.minute.values) {
+      for (const second of fields.second.values) {
+        times.push(hour * 3600 + minute * 60 + second);
+      }
+    }
+  }
+  times.sort((a, b) => a - b);
+  if (!times.length) return null;
+  let intraDayGap = Infinity;
+  for (let index = 1; index < times.length; index += 1) {
+    intraDayGap = Math.min(intraDayGap, times[index] - times[index - 1]);
+  }
+
+  let minGap = Infinity;
+  let matchedDay = false;
+  let previousOccurrence = null;
+  const start = Date.UTC(2026, 0, 1);
+  const horizonDays = 366 * 12;
+  for (let day = 0; day < horizonDays; day += 1) {
+    const dayStartMs = start + day * 24 * 60 * 60 * 1000;
+    const date = new Date(dayStartMs);
+    if (!cronDayMatches(date, fields)) continue;
+    matchedDay = true;
+    minGap = Math.min(minGap, intraDayGap);
+    const firstOccurrence = dayStartMs / 1000 + times[0];
+    if (previousOccurrence != null) minGap = Math.min(minGap, firstOccurrence - previousOccurrence);
+    if (minGap <= 1) return 1;
+    previousOccurrence = dayStartMs / 1000 + times[times.length - 1];
+  }
+  return matchedDay && Number.isFinite(minGap) ? Math.max(1, Math.round(minGap)) : null;
+}
+
+function cronTimeoutSeconds(body, settings) {
+  const fallback = normalizePositiveInteger(settings.defaultTimeoutSeconds, 600) || 600;
+  const mode = String(body.scheduleMode || "every");
+  if (mode === "every") return parseDurationSeconds(body.every || "1h") || fallback;
+  if (mode === "cron") return minCronExpressionIntervalSeconds(body.cron) || fallback;
+  return fallback;
 }
 
 function normalizeToolList(value) {
@@ -152,7 +347,7 @@ function cronArgs(body, settings) {
     else args.push("--no-deliver");
   }
   if (jobMode !== "system-event" && body.lightContext) args.push("--light-context");
-  const timeoutSeconds = normalizePositiveInteger(body.timeoutSeconds, settings.defaultTimeoutSeconds);
+  const timeoutSeconds = cronTimeoutSeconds(body, settings);
   if (jobMode !== "system-event" && timeoutSeconds) args.push("--timeout-seconds", String(timeoutSeconds));
   const channel = requestedChannel;
   const to = optionalText(body.to || body.replyTo, 300);
@@ -188,11 +383,14 @@ function eventArgs(body) {
 export {
   agentArgs,
   applyCronMessageGuidance,
+  cronTimeoutSeconds,
   cronArgs,
   eventArgs,
   mergeToolList,
+  minCronExpressionIntervalSeconds,
   normalizePositiveInteger,
   normalizeThinking,
   normalizeToolList,
+  parseDurationSeconds,
   subagentCoordinationTools,
 };
