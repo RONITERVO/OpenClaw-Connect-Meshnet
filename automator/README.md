@@ -19,9 +19,9 @@ Start-OpenClaw-Automator.cmd
 - Choose a schedule preset: now, in 30 minutes, every 2 hours, morning, weekdays, or hourly.
 - Choose whether the answer should message you back, POST to a webhook, or run quietly.
 - Let the backend fill reply targets for Telegram sessions.
-- Open **Advanced settings** only when you need exact schedule fields, job name/description, enabled state, session-key override, cron session target, agent/model override, subagent coordination, tools, webhook URL, stagger/exact cron timing, wake mode, or system-event mode.
+- Open **Advanced settings** only when you need exact schedule fields, job name/description, enabled state, session-key override, cron session target, agent/model override, immediate-run timeout, subagent coordination, tools, webhook URL, stagger/exact cron timing, wake mode, or system-event mode.
 - Watch the **Safety check** panel. It warns when the agent reads one chat/session but the answer goes somewhere else, even when that setup is technically valid.
-- Use **Step plan controller** for scheduled jobs that should move through a precise list of steps. Fill the row grid with Step name, Next action, Done when, and State note; use **Add from previous** or row-level **Copy down** when the next row only needs small edits. It creates one repeating cron that advances through configured steps only after the agent reports the current step complete. Step controller jobs need the Automator backend running on `127.0.0.1:18890` when the agent reports progress.
+- Use **Step plan controller** for scheduled jobs that should move through a precise list of steps. Fill the row grid with Step name, Next action, Done when, and State note; use **Add from previous** or row-level **Copy down** when the next row only needs small edits. It creates one repeating cron that advances through configured steps only after the agent reports the current step complete. Continue immediately is enabled by default so progress or non-final completion starts the next run right away; turn it off when the schedule interval should pace the workflow. Step controller jobs need the Automator backend running on `127.0.0.1:18890` when the agent reports progress.
 - Step controller prompts intentionally include only the active row. Previous and future rows are not injected into the cron message. The prompt uses a bounded `/goal`-style contract: preserve the active-row scope, work from current evidence, and report complete only when the row's `Done when` condition is proven. The backend writes a read-only past-events log from controller transitions and matching local OpenClaw transcript/trajectory artifacts, so the agent can inspect focused history only when it needs more context.
 - Hover on a control for 5 seconds to show contextual labels.
 - Use **Simple** labels for plain-language explanations, or **Detailed** labels to see the exact OpenClaw behavior before acting.
@@ -48,9 +48,12 @@ openclaw cron add `
   --every 2h `
   --message "Your automated message here" `
   --thinking xhigh `
+  --timeout-seconds 7200 `
   --expect-final `
   --no-deliver
 ```
+
+Automator derives cron `--timeout-seconds` from the schedule instead of exposing it as a manual field. `--every 2h` gets 7200 seconds, and cron expressions use the shortest interval the expression can fire. Step-controller jobs with Continue immediately enabled get 2073600 seconds, which is 24 days and stays below Node's 32-bit millisecond timer ceiling. One-shot cron jobs use the configured default timeout because there is no next scheduled run to protect.
 
 Advanced cron controls mirror the useful Gateway `/cron` fields: `--disabled`, `--description`, `--agent`, `--model`, `--webhook`, `--best-effort-deliver`, `--stagger`, `--exact`, `--delete-after-run`, and `--keep-after-run`.
 

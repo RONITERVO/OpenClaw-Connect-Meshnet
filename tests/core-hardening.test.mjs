@@ -124,7 +124,7 @@ try {
     await close(server);
   }
 
-  const { agentArgs, cronArgs, eventArgs } = await import("../automator/lib/commands.mjs");
+  const { agentArgs, autoContinueTimeoutSeconds, cronArgs, cronTimeoutSeconds, eventArgs, minCronExpressionIntervalSeconds, parseDurationSeconds } = await import("../automator/lib/commands.mjs");
   const commandSettings = {
     defaultThinking: "xhigh",
     defaultTimeoutSeconds: 600,
@@ -143,7 +143,20 @@ try {
     deliveryMode: "quiet",
     timeoutSeconds: 0,
   }, commandSettings);
-  assert.equal(cronCommand[cronCommand.indexOf("--timeout-seconds") + 1], "600");
+  assert.equal(cronCommand[cronCommand.indexOf("--timeout-seconds") + 1], "3600");
+  assert.equal(parseDurationSeconds("1h30m"), 5400);
+  assert.equal(cronTimeoutSeconds({ scheduleMode: "every", every: "30m", timeoutSeconds: 1 }, commandSettings), 1800);
+  assert.equal(cronTimeoutSeconds({ scheduleMode: "every", every: "30m", workflow: { stepPlanEnabled: true } }, commandSettings), autoContinueTimeoutSeconds);
+  assert.equal(cronTimeoutSeconds({ scheduleMode: "every", every: "30m", workflow: { stepPlanEnabled: true, autoContinue: false } }, commandSettings), 1800);
+  assert.equal(autoContinueTimeoutSeconds, 2073600);
+  assert.equal(minCronExpressionIntervalSeconds("*/15 * * * *"), 900);
+  assert.equal(minCronExpressionIntervalSeconds("0 0 29 2 *"), 126230400);
+  assert.equal(minCronExpressionIntervalSeconds("* * 31 2 *"), null);
+  assert.equal(cronTimeoutSeconds({ scheduleMode: "cron", cron: "0 9 * * 1-5", timeoutSeconds: 1 }, commandSettings), 86400);
+  assert.equal(minCronExpressionIntervalSeconds("0 9 15 * 1"), 86400);
+  assert.equal(minCronExpressionIntervalSeconds("0 9 15 * +1"), 2419200);
+  assert.equal(minCronExpressionIntervalSeconds("0 9 15 * +MON"), 2419200);
+  assert.equal(cronTimeoutSeconds({ scheduleMode: "cron", cron: "0 9 15 * +1", timeoutSeconds: 1 }, commandSettings), 2419200);
   const subagentCronCommand = cronArgs({
     name: "subagent test",
     sessionKey: "agent:main:test",
@@ -199,7 +212,7 @@ try {
     deliveryMode: "quiet",
     timeoutSeconds: 0.1,
   }, commandSettings);
-  assert.equal(tinyCronTimeout[tinyCronTimeout.indexOf("--timeout-seconds") + 1], "1");
+  assert.equal(tinyCronTimeout[tinyCronTimeout.indexOf("--timeout-seconds") + 1], "3600");
   const tinyEventTimeout = eventArgs({ sessionKey: "agent:main:test", text: "hello", timeoutMs: 0.1 });
   assert.equal(tinyEventTimeout[tinyEventTimeout.indexOf("--timeout") + 1], "1");
   const { execOpenClaw } = await import("../automator/lib/openclaw.mjs");
